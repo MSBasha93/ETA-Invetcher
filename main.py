@@ -116,36 +116,70 @@ class App(ctk.CTk):
             messagebox.showerror("Export Failed", f"An error occurred while saving the file:\n{e}")
     def create_db_setup_frame(self):
         self.db_frame = ctk.CTkFrame(self)
-        self.db_frame.grid_columnconfigure(0, weight=1)
+        self.db_frame.grid_columnconfigure(0, weight=1) # Make the button frame centered
+
         ctk.CTkLabel(self.db_frame, text="Step 2: Database Connection", font=ctk.CTkFont(size=16, weight="bold")).grid(row=0, column=0, columnspan=4, pady=10)
-        self.db_host_entry = ctk.CTkEntry(self.db_frame, placeholder_text="DB Host")
-        self.db_host_entry.grid(row=1, column=0, padx=5, pady=5, sticky="ew")
-        self.db_user_entry = ctk.CTkEntry(self.db_frame, placeholder_text="DB User")
-        self.db_user_entry.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
-        self.db_pass_entry = ctk.CTkEntry(self.db_frame, placeholder_text="DB Password", show="*")
-        self.db_pass_entry.grid(row=1, column=2, padx=5, pady=5, sticky="ew")
-        self.db_name_entry = ctk.CTkEntry(self.db_frame, placeholder_text="DB Name")
-        self.db_name_entry.grid(row=1, column=3, padx=5, pady=5, sticky="ew")
-        self.db_test_button = ctk.CTkButton(self.db_frame, text="Test & Save Connection", command=self.run_db_test)
-        self.db_test_button.grid(row=2, column=0, columnspan=4, pady=15)
+        
+        # Grid for entry fields
+        entry_frame = ctk.CTkFrame(self.db_frame, fg_color="transparent")
+        entry_frame.grid(row=1, column=0, sticky="ew")
+        entry_frame.grid_columnconfigure((0,1,2,3), weight=1)
+        
+        self.db_host_entry = ctk.CTkEntry(entry_frame, placeholder_text="DB Host")
+        self.db_host_entry.grid(row=0, column=0, padx=5, pady=5, sticky="ew")
+        self.db_user_entry = ctk.CTkEntry(entry_frame, placeholder_text="DB User")
+        self.db_user_entry.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
+        self.db_pass_entry = ctk.CTkEntry(entry_frame, placeholder_text="DB Password", show="*")
+        self.db_pass_entry.grid(row=0, column=2, padx=5, pady=5, sticky="ew")
+        self.db_name_entry = ctk.CTkEntry(entry_frame, placeholder_text="DB Name")
+        self.db_name_entry.grid(row=0, column=3, padx=5, pady=5, sticky="ew")
+
+        # Grid for buttons
+        button_frame = ctk.CTkFrame(self.db_frame, fg_color="transparent")
+        button_frame.grid(row=2, column=0, pady=15)
+
+        # --- NEW: Back Button ---
+        self.db_back_button = ctk.CTkButton(button_frame, text="< Back to ETA", command=lambda: self.show_frame(self.eta_frame))
+        self.db_back_button.grid(row=0, column=0, padx=10)
+        
+        self.db_test_button = ctk.CTkButton(button_frame, text="Test & Save Connection", command=self.run_db_test)
+        self.db_test_button.grid(row=0, column=1, padx=10)
+        
         self.db_status_label = ctk.CTkLabel(self.db_frame, text="Status: Awaiting credentials...", text_color="gray")
         self.db_status_label.grid(row=3, column=0, columnspan=4, pady=5)
+
     def create_main_sync_frame(self):
         self.main_frame = ctk.CTkFrame(self)
-        self.main_frame.grid_columnconfigure(4, weight=1)
-        ctk.CTkLabel(self.main_frame, text="Step 3: Run Sync", font=ctk.CTkFont(size=16, weight="bold")).grid(row=0, column=0, columnspan=6, pady=10)
-        self.start_date_label = ctk.CTkLabel(self.main_frame, text="Start Date:")
-        self.start_date_label.grid(row=1, column=0, padx=5, pady=5)
-        self.start_date_entry = DateEntry(self.main_frame, date_pattern='y-mm-dd')
-        self.start_date_entry.grid(row=1, column=1, padx=5, pady=5)
-        self.end_date_label = ctk.CTkLabel(self.main_frame, text="End Date:")
-        self.end_date_label.grid(row=1, column=2, padx=5, pady=5)
-        self.end_date_entry = DateEntry(self.main_frame, date_pattern='y-mm-dd')
-        self.end_date_entry.grid(row=1, column=3, padx=5, pady=5)
-        self.sync_button = ctk.CTkButton(self.main_frame, text="Start Historical Sync", command=self.start_sync)
-        self.sync_button.grid(row=1, column=4, padx=10, pady=10, sticky="e")
-        self.cancel_button = ctk.CTkButton(self.main_frame, text="Cancel Sync", state="disabled", command=self.cancel_sync)
-        self.cancel_button.grid(row=1, column=5, padx=10, pady=10)
+        self.main_frame.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(self.main_frame, text="Step 3: Run Sync", font=ctk.CTkFont(size=16, weight="bold")).grid(row=0, column=0, pady=10)
+
+        # Frame for date pickers
+        date_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
+        date_frame.grid(row=1, column=0)
+        
+        self.start_date_label = ctk.CTkLabel(date_frame, text="Start Date:")
+        self.start_date_label.grid(row=0, column=0, padx=5, pady=5)
+        self.start_date_entry = DateEntry(date_frame, date_pattern='y-mm-dd')
+        self.start_date_entry.grid(row=0, column=1, padx=5, pady=5)
+        self.end_date_label = ctk.CTkLabel(date_frame, text="End Date:")
+        self.end_date_label.grid(row=0, column=2, padx=(20, 5), pady=5)
+        self.end_date_entry = DateEntry(date_frame, date_pattern='y-mm-dd')
+        self.end_date_entry.grid(row=0, column=3, padx=5, pady=5)
+
+        # Frame for action buttons
+        button_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
+        button_frame.grid(row=2, column=0, pady=15)
+        
+        # --- NEW: Back Button ---
+        self.sync_back_button = ctk.CTkButton(button_frame, text="< Back to Database", command=lambda: self.show_frame(self.db_frame))
+        self.sync_back_button.grid(row=0, column=0, padx=10)
+
+        self.sync_button = ctk.CTkButton(button_frame, text="Start Historical Sync", command=self.start_sync)
+        self.sync_button.grid(row=0, column=1, padx=10)
+        self.cancel_button = ctk.CTkButton(button_frame, text="Cancel Sync", state="disabled", command=self.cancel_sync)
+        self.cancel_button.grid(row=0, column=2, padx=10)
+        
     def create_log_and_progress_frame(self):
         self.log_frame = ctk.CTkFrame(self)
         self.log_frame.grid(row=3, column=0, sticky="nsew", padx=10, pady=(0, 10))
@@ -362,11 +396,26 @@ class App(ctk.CTk):
             self.live_sync_client_labels[name] = status_label
     # --- Other methods (show_frame, load_clients, on_client_selected, etc.) can be reused ---
     def show_frame(self, frame_to_show):
-        self.eta_frame.grid_remove(); self.db_frame.grid_remove(); self.main_frame.grid_remove()
-        if frame_to_show == self.main_frame:
-             frame_to_show.grid(row=2, column=0, sticky="ew", padx=10, pady=0)
-        else:
-             frame_to_show.grid(row=1, column=0, sticky="ew", padx=10, pady=0)
+        """Hides all main content frames and shows the specified one in the correct layout."""
+        # --- THE CRITICAL FIX: Explicitly hide ALL possible main content frames ---
+        self.eta_frame.grid_remove()
+        self.db_frame.grid_remove()
+        self.main_frame.grid_remove()
+        self.live_sync_frame.grid_remove()
+
+        # Now, show the requested frame in its correct grid position
+        if frame_to_show == self.live_sync_frame:
+            # The Live Sync page takes up the full area below the client selector
+            self.populate_live_sync_frame()
+            self.live_sync_frame.grid(row=1, column=0, rowspan=2, sticky="nsew", padx=10, pady=0)
+        
+        elif frame_to_show == self.main_frame:
+            # The Main Sync page is the third step in the setup workflow
+            self.main_frame.grid(row=2, column=0, sticky="ew", padx=10, pady=0)
+        
+        else: # This handles both the eta_frame and the db_frame
+            # These are the first and second steps in the setup workflow
+            frame_to_show.grid(row=1, column=0, sticky="ew", padx=10, pady=0)
 
         if frame_to_show == self.live_sync_frame:
             self.populate_live_sync_frame()
@@ -383,28 +432,31 @@ class App(ctk.CTk):
              self.selected_client_name.set(client_names[0]); self.on_client_selected(client_names[0])
         else:
              self.selected_client_name.set(client_names[0])
+    
     def on_client_selected(self, selected_name):
+        """Called when a client is chosen. Populates fields and resets the view."""
         if selected_name in self.clients:
             client_data = self.clients[selected_name]
-            self.client_name_entry.delete(0, "end"); self.client_name_entry.insert(0, selected_name)
+            self.client_name_entry.delete(0, "end")
+            self.client_name_entry.insert(0, selected_name)
+            
+            # Populate all fields from saved config
             self.client_id_entry.delete(0, "end"); self.client_id_entry.insert(0, client_data.get('client_id', ''))
             self.client_secret_entry.delete(0, "end"); self.client_secret_entry.insert(0, client_data.get('client_secret', ''))
             self.db_host_entry.delete(0, "end"); self.db_host_entry.insert(0, client_data.get('db_host', ''))
             self.db_user_entry.delete(0, "end"); self.db_user_entry.insert(0, client_data.get('db_user', ''))
             self.db_pass_entry.delete(0, "end"); self.db_pass_entry.insert(0, client_data.get('db_pass', ''))
             self.db_name_entry.delete(0, "end"); self.db_name_entry.insert(0, client_data.get('db_name', ''))
-            # --- THIS IS THE NEW LOGIC ---
-            # If we already know the oldest date, we don't need to analyze again.
-            if client_data.get('oldest_invoice_date'):
-                self.eta_analyze_button.configure(text="Dates Already Analyzed", state="disabled")
-            else:
-                self.eta_analyze_button.configure(text="Analyze Invoice Dates", state="disabled") # Disabled until auth is tested
-
+            
+            # --- NEW: Reset status labels and the view ---
+            self.eta_status_label.configure(text="Status: Awaiting credentials...", text_color="gray")
+            self.db_status_label.configure(text="Status: Awaiting credentials...", text_color="gray")
+            self.eta_analyze_button.configure(state="disabled") # Re-disable analyze button until auth is tested
+            
             config_manager.save_last_selected_client(selected_name)
+            # --- NEW: Always return to the first step for the newly selected client ---
             self.show_frame(self.eta_frame)
 
-            config_manager.save_last_selected_client(selected_name)
-            self.show_frame(self.eta_frame)
     def start_sync(self):
         self.progressbar.set(0); self.log_message("--- Starting Sync ---")
         self.sync_button.configure(state="disabled"); self.cancel_button.configure(state="normal")
