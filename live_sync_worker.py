@@ -96,6 +96,7 @@ class LiveSyncWorker(Thread):
                                 success, message = db_manager.insert_document(details, table_prefix)
                                 if success:
                                     total_new_docs += 1
+                                    self.progress_queue.put(("LOG", f"      -> Saved doc (UUID: {uuid[:8]}...)"))
                                     doc_ts_str = details.get('dateTimeReceived') or details.get('dateTimeRecevied')
                                     if doc_ts_str:
                                         if '.' in doc_ts_str and len(doc_ts_str.split('.')[1]) > 7:

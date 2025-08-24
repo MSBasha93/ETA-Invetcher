@@ -66,7 +66,11 @@ class SyncWorker(Thread):
                         details = self.api_client.get_document_details(uuid)
                         if details:
                             success, message = self.db_manager.insert_document(details, table_prefix)
-                            if not success:
+                            if success:
+                                # --- THIS IS THE ADDED LINE ---
+                                # Log progress for every successfully saved document
+                                self.progress_queue.put(("LOG", f"    -> Saved doc {i+1}/{len(all_summaries)} (UUID: {uuid[:8]}...)"))
+                            else:
                                 self.progress_queue.put(("LOG", f"DB_FAIL on doc {uuid[:8]}: {message}"))
                         else:
                             self.progress_queue.put(("LOG", f"API_FAIL: Could not get details for {uuid} after retries."))
