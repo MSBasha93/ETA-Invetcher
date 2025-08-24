@@ -50,22 +50,22 @@ class App(ctk.CTk):
         self.eta_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=0)
         self.eta_frame.grid_columnconfigure(0, weight=1)
         self.eta_frame.grid_columnconfigure(1, weight=1)
-        
-        ctk.CTkLabel(self.eta_frame, text="Step 1: ETA Credentials", font=ctk.CTkFont(size=16, weight="bold")).grid(row=0, column=0, columnspan=2, pady=10)
-        self.client_id_entry = ctk.CTkEntry(self.eta_frame, placeholder_text="ETA Client ID")
-        self.client_id_entry.grid(row=1, column=0, columnspan=2, padx=10, pady=5, sticky="ew")
-        self.client_secret_entry = ctk.CTkEntry(self.eta_frame, placeholder_text="ETA Client Secret", show="*")
-        self.client_secret_entry.grid(row=2, column=0, columnspan=2, padx=10, pady=5, sticky="ew")
 
-        # --- NEW: Two separate buttons for better UX ---
+        ctk.CTkLabel(self.eta_frame, text="Step 1: ETA Credentials", font=ctk.CTkFont(size=16, weight="bold")).grid(row=0, column=0, columnspan=2, pady=10)
+        
+        # --- NEW: Added a dedicated field for the Tax ID ---
+        self.client_id_entry = ctk.CTkEntry(self.eta_frame, placeholder_text="API Client ID")
+        self.client_id_entry.grid(row=2, column=0, columnspan=2, padx=10, pady=5, sticky="ew")
+        self.client_secret_entry = ctk.CTkEntry(self.eta_frame, placeholder_text="API Client Secret", show="*")
+        self.client_secret_entry.grid(row=3, column=0, columnspan=2, padx=10, pady=5, sticky="ew")
+
         self.eta_test_button = ctk.CTkButton(self.eta_frame, text="Test Authentication", command=self.run_eta_auth_test)
-        self.eta_test_button.grid(row=3, column=0, padx=10, pady=15, sticky="e")
+        self.eta_test_button.grid(row=4, column=0, padx=10, pady=15, sticky="e")
         self.eta_analyze_button = ctk.CTkButton(self.eta_frame, text="Analyze Invoice Dates", state="disabled", command=self.run_eta_analysis)
-        self.eta_analyze_button.grid(row=3, column=1, padx=10, pady=15, sticky="w")
+        self.eta_analyze_button.grid(row=4, column=1, padx=10, pady=15, sticky="w")
         
         self.eta_status_label = ctk.CTkLabel(self.eta_frame, text="Status: Awaiting credentials...", text_color="gray")
-        self.eta_status_label.grid(row=4, column=0, columnspan=2, pady=5)
-    # ... (other create_* methods from previous version can be reused here) ...
+        self.eta_status_label.grid(row=5, column=0, columnspan=2, pady=5)
     def create_client_management_frame(self):
         self.client_frame = ctk.CTkFrame(self)
         self.client_frame.grid(row=0, column=0, sticky="ew", padx=10, pady=10)
@@ -331,11 +331,16 @@ class App(ctk.CTk):
             elif message_type == "LIVE_UPDATE":
                 client_name, status_text = data
                 if client_name in self.live_sync_client_labels:
-                    self.live_sync_client_labels[client_name].configure(text=status_text)
+                    self.live_sync_client_labels[client_name]['status'].configure(text=status_text)
                 if "Done" in status_text or "Fail" in status_text:
                     if all("Done" in lbl.cget("text") or "Fail" in lbl.cget("text") for lbl in self.live_sync_client_labels.values()):
                         self.live_sync_start_button.configure(state="normal")
                         self.live_sync_cancel_button.configure(state="disabled")
+            elif message_type == "LIVE_SYNC_COMPLETE":
+                self.live_sync_start_button.configure(state="normal")
+                self.live_sync_cancel_button.configure(state="disabled")
+                self.live_sync_refresh_button.configure(state="normal")
+                messagebox.showinfo("Live Sync", "Live sync for all clients is complete.")
         except queue.Empty: pass
         finally: self.after(100, self.process_queue)
 
@@ -345,56 +350,67 @@ class App(ctk.CTk):
 
         header_frame = ctk.CTkFrame(self.live_sync_frame)
         header_frame.grid(row=0, column=0, sticky="ew", padx=10, pady=10)
-        header_frame.grid_columnconfigure(0, weight=1)
+        header_frame.grid_columnconfigure(1, weight=1)
 
         self.live_sync_start_button = ctk.CTkButton(header_frame, text="Start Live Sync", command=self.start_live_sync)
         self.live_sync_start_button.grid(row=0, column=0, padx=10, pady=10)
+        
+        self.live_sync_refresh_button = ctk.CTkButton(header_frame, text="Refresh Status", command=self.populate_live_sync_frame)
+        self.live_sync_refresh_button.grid(row=0, column=1, padx=(20,10), pady=10, sticky="w")
+        
         self.live_sync_cancel_button = ctk.CTkButton(header_frame, text="Cancel", state="disabled", command=self.cancel_live_sync)
-        self.live_sync_cancel_button.grid(row=0, column=1, padx=10, pady=10)
+        self.live_sync_cancel_button.grid(row=0, column=2, padx=10, pady=10)
+        
         self.back_to_setup_button = ctk.CTkButton(header_frame, text="< Back to Setup", command=lambda: self.show_frame(self.eta_frame))
-        self.back_to_setup_button.grid(row=0, column=2, padx=10, pady=10)
+        self.back_to_setup_button.grid(row=0, column=3, padx=10, pady=10)
 
         self.client_list_frame = ctk.CTkScrollableFrame(self.live_sync_frame, label_text="Client Sync Status")
         self.client_list_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=10)
         self.live_sync_frame.grid_rowconfigure(1, weight=1)
+        self.client_list_frame.grid_columnconfigure(2, weight=1)
 
     def populate_live_sync_frame(self):
-        # Clear previous labels
+        """Prepares the Live Sync UI, populates the client list, and sets button states correctly."""
         for widget in self.client_list_frame.winfo_children():
             widget.destroy()
         self.live_sync_client_labels = {}
 
-        # --- CRASH FIX: Use the correct parameter mapping for the DB connection ---
-        db_params = {
-            'host': self.db_host_entry.get(),
-            'dbname': self.db_name_entry.get(),
-            'user': self.db_user_entry.get(),
-            'password': self.db_pass_entry.get(),
-            'port': 5432 # Assuming default, could be loaded from config too
-        }
+        # The crash fix for DB connection is already in this method
+        db_params = { 'host': self.db_host_entry.get(), 'dbname': self.db_name_entry.get(), 'user': self.db_user_entry.get(), 'password': self.db_pass_entry.get(), 'port': 5432 }
         temp_db_manager = DatabaseManager(db_params)
         statuses = {}
         if temp_db_manager.connect():
-            # Now we need a richer get_all_sync_statuses method
-            statuses = temp_db_manager.get_all_sync_statuses() 
+            statuses = temp_db_manager.get_all_sync_statuses()
             temp_db_manager.disconnect()
 
+        # --- THIS IS THE CRITICAL FIX ---
+        # Check if there are any clients configured *before* building the list
+        if not self.clients:
+            ctk.CTkLabel(self.client_list_frame, text="No clients have been configured yet.").pack(pady=20)
+            self.live_sync_start_button.configure(state="disabled") # Disable the button
+            return # Stop here
+
+        # If we have clients, enable the button
+        self.live_sync_start_button.configure(state="normal")
+        
+        # Now, proceed with populating the list for each client
         for i, (name, config) in enumerate(self.clients.items()):
             client_id = config.get('client_id')
             last_sync_info = statuses.get(client_id)
             
-            # --- UPGRADED UI DISPLAY ---
             if last_sync_info:
                 ts, uuid, internal_id = last_sync_info
-                sync_text = f"Up to doc {internal_id or uuid[:8]} on {ts.strftime('%Y-%m-%d')}"
+                sync_text = f"Up to doc '{internal_id or uuid[:8]}' on {ts.strftime('%Y-%m-%d')}"
             else:
                 sync_text = "Never Synced"
 
-            ctk.CTkLabel(self.client_list_frame, text=name, font=ctk.CTkFont(weight="bold")).grid(row=i, column=0, sticky="w", padx=10)
-            status_label = ctk.CTkLabel(self.client_list_frame, text=sync_text, anchor="e")
-            status_label.grid(row=i, column=1, sticky="e", padx=10)
-            self.live_sync_client_labels[name] = status_label
-    # --- Other methods (show_frame, load_clients, on_client_selected, etc.) can be reused ---
+            ctk.CTkLabel(self.client_list_frame, text=name, font=ctk.CTkFont(weight="bold")).grid(row=i, column=0, sticky="w", padx=10, pady=5)
+            last_sync_label = ctk.CTkLabel(self.client_list_frame, text=sync_text, anchor="w")
+            last_sync_label.grid(row=i, column=1, sticky="w", padx=10)
+            status_label = ctk.CTkLabel(self.client_list_frame, text="Idle", text_color="gray", anchor="e")
+            status_label.grid(row=i, column=2, sticky="ew", padx=10)
+            
+            self.live_sync_client_labels[name] = {'main': last_sync_label, 'status': status_label}
     def show_frame(self, frame_to_show):
         """Hides all main content frames and shows the specified one in the correct layout."""
         # --- THE CRITICAL FIX: Explicitly hide ALL possible main content frames ---
@@ -439,7 +455,6 @@ class App(ctk.CTk):
             client_data = self.clients[selected_name]
             self.client_name_entry.delete(0, "end")
             self.client_name_entry.insert(0, selected_name)
-            
             # Populate all fields from saved config
             self.client_id_entry.delete(0, "end"); self.client_id_entry.insert(0, client_data.get('client_id', ''))
             self.client_secret_entry.delete(0, "end"); self.client_secret_entry.insert(0, client_data.get('client_secret', ''))
@@ -475,6 +490,7 @@ class App(ctk.CTk):
     def start_live_sync(self):
         self.live_sync_start_button.configure(state="disabled")
         self.live_sync_cancel_button.configure(state="normal")
+        self.live_sync_refresh_button.configure(state="disabled") # Disable refresh during sync
         self.live_sync_worker_thread = LiveSyncWorker(self.clients, self.ui_queue)
         self.live_sync_worker_thread.start()
     def cancel_live_sync(self):

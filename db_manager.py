@@ -198,25 +198,24 @@ class DatabaseManager:
             self.conn.rollback()
             return (False, str(e).strip())
 
-    def get_latest_invoice_timestamp(self, client_id):
+    def get_latest_invoice_timestamp(self):
         """
-        Finds the most recent 'date_time_received' for a client across both
-        received (documents) and sent (sent_documents) tables.
+        Finds the most recent 'date_time_received' across both documents
+        and sent_documents tables without needing an ID.
         """
-        latest_ts = None
-        queries = [
-            "SELECT MAX(date_time_received) FROM documents WHERE receiver_id = %s",
-            "SELECT MAX(date_time_received) FROM sent_documents WHERE issuer_id = %s"
-        ]
-        
+        query = """
+            SELECT MAX(date_time_received) FROM (
+                SELECT date_time_received FROM documents
+                UNION ALL
+                SELECT date_time_received FROM sent_documents
+            ) AS all_dates;
+        """
         try:
             with self.conn.cursor() as cur:
-                for query in queries:
-                    cur.execute(query, (client_id,))
-                    result = cur.fetchone()[0]
-                    if result and (latest_ts is None or result > latest_ts):
-                        latest_ts = result
-            return latest_ts
+                cur.execute(query)
+                result = cur.fetchone()[0]
+                return result # This will be the latest timestamp or None
         except psycopg2.Error as e:
-            print(f"Failed to get latest invoice timestamp for {client_id}: {e}")
+            print(f"Failed to get latest invoice timestamp: {e}")
+            self.conn.rollback()
             return None

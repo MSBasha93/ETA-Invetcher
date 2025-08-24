@@ -5,11 +5,9 @@ import json
 CONFIG_FILE = 'settings.ini'
 
 def save_client_config(client_name, client_id, client_secret, db_host, db_port, db_name, db_user, db_pass, date_span=None, oldest_invoice_date=None):
-    """Saves or updates the configuration for a single client."""
     config = configparser.ConfigParser()
     if os.path.exists(CONFIG_FILE):
         config.read(CONFIG_FILE)
-
     section_name = f"Client_{client_name}"
     config[section_name] = {
         'client_id': client_id,
@@ -22,25 +20,18 @@ def save_client_config(client_name, client_id, client_secret, db_host, db_port, 
         'date_span': json.dumps(date_span) if date_span else "",
         'oldest_invoice_date': oldest_invoice_date if oldest_invoice_date else ""
     }
-    
     with open(CONFIG_FILE, 'w') as configfile:
         config.write(configfile)
 
 def load_all_clients():
-    """Loads all client configurations from the file."""
-    if not os.path.exists(CONFIG_FILE):
-        return {}
-    
+    if not os.path.exists(CONFIG_FILE): return {}
     config = configparser.ConfigParser()
     config.read(CONFIG_FILE)
-    
     clients = {}
     for section in config.sections():
         if section.startswith('Client_'):
             client_name = section.replace('Client_', '', 1)
             clients[client_name] = dict(config.items(section))
-            clients[client_name]['oldest_invoice_date'] = clients[client_name].get('oldest_invoice_date')
-            # Safely parse the date span
             try:
                 clients[client_name]['date_span'] = json.loads(clients[client_name].get('date_span', 'null'))
             except (json.JSONDecodeError, TypeError):

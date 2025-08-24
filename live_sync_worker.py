@@ -29,21 +29,21 @@ class LiveSyncWorker(Thread):
             self.progress_queue.put(("LOG", f"--- Syncing client: {client_name} ---"))
 
             db_params = {
-                'host': client_config.get('db_host'),
-                'dbname': client_config.get('db_name'),
-                'user': client_config.get('db_user'),
-                'password': client_config.get('db_pass'),
+                'host': client_config.get('db_host'), 'dbname': client_config.get('db_name'),
+                'user': client_config.get('db_user'), 'password': client_config.get('db_pass'),
                 'port': client_config.get('db_port', 5432)
             }
             api_client = ETAApiClient(client_config['client_id'], client_config['client_secret'])
             db_manager = DatabaseManager(db_params)
             
+            # --- CRITICAL FIX: Connect to DB *before* getting the start date ---
             if not db_manager.connect():
                 self.progress_queue.put(("LOG", f"DB connection failed for {client_name}. Skipping."))
                 self.progress_queue.put(("LIVE_UPDATE", (client_name, "DB Conn Fail")))
                 continue
 
-            start_date = db_manager.get_latest_invoice_timestamp(client_config['client_id'])
+            # Now that we are connected, we can reliably get the latest timestamp
+            start_date = db_manager.get_latest_invoice_timestamp()
             if start_date:
                 start_date = start_date.astimezone(cairo_tz)
             else:
@@ -53,17 +53,19 @@ class LiveSyncWorker(Thread):
                 else:
                     start_date = now_in_cairo - datetime.timedelta(days=30)
             
-            self.progress_queue.put(("LOG", f"Syncing {client_name} from {start_date.strftime('%Y-%m-%d %H:%M')} until now."))
+            self.progress_queue.put(("LOG", f"Syncing {client_name} from start of day {start_date.strftime('%Y-%m-%d')} until now."))
             
             total_new_docs = 0
             newest_doc_in_run = {'timestamp': None, 'uuid': None, 'internal_id': None}
+            # --- LOGIC FIX: Always start from the beginning of the last synced day ---
             current_local_date = start_date.date()
 
             while current_local_date <= now_in_cairo.date() and self._is_running:
+                # --- LOGGING FIX: Report the day being processed ---
+                self.progress_queue.put(("LOG", f"  -> Processing Day: {current_local_date.strftime('%Y-%m-%d')} for {client_name}"))
                 day_start_local = cairo_tz.localize(datetime.datetime.combine(current_local_date, datetime.time.min))
                 day_end_local = cairo_tz.localize(datetime.datetime.combine(current_local_date, datetime.time.max))
 
-                # --- NEW: Two-pass logic for Sent and Received ---
                 directions_to_sync = [("Received", ""), ("Sent", "sent_")]
                 
                 for direction, table_prefix in directions_to_sync:
@@ -75,7 +77,12 @@ class LiveSyncWorker(Thread):
                         search_result = api_client.search_documents(day_start_local, day_end_local, continuation_token=continuation_token, direction=direction)
                         if search_result is None: break
                         
-                        for summary in search_result.get('result', []):
+                        found_summaries = search_result.get('result', [])
+                        # --- LOGGING FIX: Report when documents are found ---
+                        if found_summaries:
+                            self.progress_queue.put(("LOG", f"    -> Found {len(found_summaries)} '{direction}' documents."))
+
+                        for summary in found_summaries:
                             if not self._is_running: break
                             uuid = summary['uuid']
                             

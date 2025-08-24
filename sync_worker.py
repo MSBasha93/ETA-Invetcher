@@ -35,7 +35,6 @@ class SyncWorker(Thread):
             
             for direction, table_prefix in directions_to_sync:
                 if not self._is_running: break
-                self.progress_queue.put(("LOG", f"  -> Checking for '{direction}' documents..."))
                 
                 try:
                     continuation_token = None
@@ -81,7 +80,7 @@ class SyncWorker(Thread):
             current_local_date += datetime.timedelta(days=1)
         
         if self._is_running:
-            final_latest_ts = self.db_manager.get_latest_invoice_timestamp(self.api_client.client_id)
+            final_latest_ts = self.db_manager.get_latest_invoice_timestamp()
             if final_latest_ts:
                 # We need to get the UUID and Internal ID of this latest doc to update status
                 # This part can be enhanced later, for now we save the time
