@@ -21,41 +21,66 @@ class DatabaseManager:
             self.conn.close()
 
     def check_and_create_tables(self):
-        """Checks if required tables exist and creates them if they don't, including SyncStatus."""
-        # --- THIS IS THE CRITICAL FIX FOR THE SYNTAX ERROR ---
+        """
+        Creates the FULL, detailed schema matching your 'menna' database.
+        """
         commands = (
+            # --- Documents and Sent_Documents (Identical, detailed schema) ---
             """
             CREATE TABLE IF NOT EXISTS documents (
-                uuid VARCHAR(255) PRIMARY KEY, submission_uuid VARCHAR(255), internal_id VARCHAR(255),
-                type_name VARCHAR(50), issuer_id VARCHAR(50), issuer_name VARCHAR(255),
-                receiver_id VARCHAR(50), receiver_name VARCHAR(255), date_time_issued TIMESTAMP,
-                date_time_received TIMESTAMP, total_sales NUMERIC, total_discount NUMERIC,
-                net_amount NUMERIC, total_amount NUMERIC, status VARCHAR(50)
-            )
+                uuid VARCHAR(255) PRIMARY KEY, submission_uuid VARCHAR(255), long_id VARCHAR(255), internal_id VARCHAR(255), type_name VARCHAR(255),
+                document_type_name_primary_lang VARCHAR(255), document_type_name_secondary_lang VARCHAR(255), type_version_name VARCHAR(255),
+                document_type_version VARCHAR(255), document_type VARCHAR(255), issuer_id VARCHAR(255), issuer_name VARCHAR(255), issuer_type VARCHAR(255),
+                issuer_address_branch_id VARCHAR(255), issuer_address_country VARCHAR(255), issuer_address_governate VARCHAR(255),
+                issuer_address_region_city VARCHAR(255), issuer_address_street TEXT, issuer_address_building_number VARCHAR(255),
+                issuer_address_floor VARCHAR(255), issuer_address_room VARCHAR(255), issuer_address_landmark VARCHAR(255), issuer_address_additional_information TEXT,
+                receiver_id VARCHAR(255), receiver_name VARCHAR(255), receiver_type VARCHAR(255), receiver_address_branch_id VARCHAR(255),
+                receiver_address_country VARCHAR(255), receiver_address_governate VARCHAR(255), receiver_address_region_city VARCHAR(255),
+                receiver_address_street TEXT, receiver_address_building_number VARCHAR(255), receiver_address_floor VARCHAR(255),
+                receiver_address_room VARCHAR(255), receiver_address_landmark VARCHAR(255), receiver_address_additional_information TEXT,
+                date_time_issued TIMESTAMP, date_time_received TIMESTAMP, service_delivery_date TIMESTAMP, customs_clearance_date TIMESTAMP,
+                validation_status VARCHAR(255), transformation_status VARCHAR(255), status_id INT, status VARCHAR(255), document_status_reason TEXT,
+                cancel_request_date TIMESTAMP, reject_request_date TIMESTAMP, cancel_request_delayed_date TIMESTAMP, reject_request_delayed_date TIMESTAMP,
+                decline_cancel_request_date TIMESTAMP, decline_reject_request_date TIMESTAMP, canbe_cancelled_until TIMESTAMP, canbe_rejected_until TIMESTAMP,
+                submission_channel INT, freeze_status_frozen BOOLEAN, freeze_status_type VARCHAR(255), freeze_status_scope VARCHAR(255),
+                freeze_status_action_date TIMESTAMP, freeze_status_au_code VARCHAR(255), freeze_status_au_name VARCHAR(255),
+                customs_declaration_number VARCHAR(255), e_payment_number VARCHAR(255), public_url TEXT, purchase_order_description TEXT,
+                sales_order_description TEXT, sales_order_reference VARCHAR(255), proforma_invoice_number VARCHAR(255), purchase_order_reference VARCHAR(255),
+                late_submission_request_number VARCHAR(255), additional_metadata TEXT, alert_details TEXT, signatures TEXT, doc_references TEXT,
+                total_items_discount_amount NUMERIC, total_amount NUMERIC, net_amount NUMERIC, total_discount NUMERIC, total_sales NUMERIC,
+                extra_discount_amount NUMERIC, max_percision INT, document_lines_total_count INT,
+                tax1_type VARCHAR(50), tax1_amount NUMERIC, tax2_type VARCHAR(50), tax2_amount NUMERIC,
+                tax3_type VARCHAR(50), tax3_amount NUMERIC, tax4_type VARCHAR(50), tax4_amount NUMERIC,
+                tax5_type VARCHAR(50), tax5_amount NUMERIC,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
             """,
+            """ CREATE TABLE IF NOT EXISTS sent_documents (LIKE documents INCLUDING ALL); """, # Efficiently duplicates the table
+            
+            # --- Document_Lines and Sent_Document_Lines (Identical, detailed schema) ---
             """
             CREATE TABLE IF NOT EXISTS document_lines (
-                id SERIAL PRIMARY KEY, document_uuid VARCHAR(255) REFERENCES documents(uuid) ON DELETE CASCADE,
-                description TEXT, item_code VARCHAR(255), quantity NUMERIC, unit_value_amount_egp NUMERIC,
-                sales_total NUMERIC, net_total NUMERIC, total NUMERIC
-            )
+                id SERIAL PRIMARY KEY, custom_uuid VARCHAR(255), document_uuid VARCHAR(255), item_primary_name TEXT, item_primary_description TEXT,
+                item_secondary_name TEXT, item_secondary_description TEXT, item_type VARCHAR(255), item_code VARCHAR(255),
+                internal_code VARCHAR(255), description TEXT, unit_type VARCHAR(255), unit_type_primary_name TEXT,
+                unit_type_primary_description TEXT, unit_type_secondary_name TEXT, unit_type_secondary_description TEXT,
+                quantity NUMERIC, weight_unit_type VARCHAR(255), weight_unit_type_primary_name TEXT, weight_unit_type_primary_description TEXT,
+                weight_unit_type_secondary_name TEXT, weight_unit_type_secondary_description TEXT, weight_quantity NUMERIC,
+                unit_value_currency_sold VARCHAR(50), unit_value_amount_sold NUMERIC, unit_value_amount_egp NUMERIC,
+                unit_value_currency_exchange_rate NUMERIC, factory_unit_value_currency_sold VARCHAR(50),
+                factory_unit_value_amount_sold NUMERIC, factory_unit_value_amount_egp NUMERIC,
+                factory_unit_value_currency_exchange_rate NUMERIC, sales_total NUMERIC, sales_total_foreign NUMERIC,
+                net_total NUMERIC, net_total_foreign NUMERIC, total NUMERIC, total_foreign NUMERIC,
+                items_discount NUMERIC, items_discount_foreign NUMERIC, total_taxable_fees NUMERIC,
+                total_taxable_fees_foreign NUMERIC, value_difference NUMERIC, value_difference_foreign NUMERIC,
+                discount_amount NUMERIC, discount_rate NUMERIC, discount_amount_foreign NUMERIC,
+                tax1_type VARCHAR(50), tax1_amount NUMERIC, tax2_type VARCHAR(50), tax2_amount NUMERIC,
+                tax3_type VARCHAR(50), tax3_amount NUMERIC, tax4_type VARCHAR(50), tax4_amount NUMERIC,
+                tax5_type VARCHAR(50), tax5_amount NUMERIC,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
             """,
-            """
-            CREATE TABLE IF NOT EXISTS sent_documents (
-                uuid VARCHAR(255) PRIMARY KEY, submission_uuid VARCHAR(255), internal_id VARCHAR(255),
-                type_name VARCHAR(50), issuer_id VARCHAR(50), issuer_name VARCHAR(255),
-                receiver_id VARCHAR(50), receiver_name VARCHAR(255), date_time_issued TIMESTAMP,
-                date_time_received TIMESTAMP, total_sales NUMERIC, total_discount NUMERIC,
-                net_amount NUMERIC, total_amount NUMERIC, status VARCHAR(50)
-            )
-            """,
-            """
-            CREATE TABLE IF NOT EXISTS sent_document_lines (
-                id SERIAL PRIMARY KEY, document_uuid VARCHAR(255) REFERENCES sent_documents(uuid) ON DELETE CASCADE,
-                description TEXT, item_code VARCHAR(255), quantity NUMERIC, unit_value_amount_egp NUMERIC,
-                sales_total NUMERIC, net_total NUMERIC, total NUMERIC
-            )
-            """,
+            """ CREATE TABLE IF NOT EXISTS sent_document_lines (LIKE document_lines INCLUDING ALL); """,
             # --- NEW SYNC STATUS TABLE ---
            """
             CREATE TABLE IF NOT EXISTS SyncStatus (
@@ -120,78 +145,83 @@ class DatabaseManager:
     
     def insert_document(self, doc_data, table_prefix=""):
         """
-        Inserts a single document, correctly parsing BOTH the normal nested structure
-        and the flat structure used for 'Cancelled' documents. Also handles API typos.
+        Inserts a single document, mapping the full API response to the detailed schema.
         """
         header_table = f"{table_prefix}documents"
         lines_table = f"{table_prefix}document_lines"
         
         try:
             with self.conn.cursor() as cur:
-                # --- THIS IS THE CRITICAL FIX ---
-                # Check if the 'document' key exists. If so, use it as the source.
-                # If not (like in a 'Cancelled' doc), use the top-level doc_data itself.
                 doc_header = doc_data.get('document', doc_data)
 
-                # Now, we extract data from the determined source object (doc_header)
+                # Prepare header data with safe access using .get()
                 header_data = {
-                    "uuid": doc_data.get('uuid'),
-                    "submission_uuid": doc_data.get('submissionUUID'),
-                    "internal_id": doc_header.get('internalID'), # Note: 'internalID' not 'internalId' in the new JSON
-                    "type_name": doc_header.get('documentType'),
-                    "issuer_id": doc_header.get('issuer', {}).get('id'),
-                    "issuer_name": doc_header.get('issuer', {}).get('name'),
-                    "receiver_id": doc_header.get('receiver', {}).get('id'),
-                    "receiver_name": doc_header.get('receiver', {}).get('name'),
+                    "uuid": doc_data.get('uuid'), "submission_uuid": doc_data.get('submissionUUID'),
+                    "internal_id": doc_header.get('internalID'), "type_name": doc_header.get('documentType'),
+                    "document_type_version": doc_header.get('documentTypeVersion'),
+                    # Issuer Info
+                    "issuer_id": doc_header.get('issuer', {}).get('id'), "issuer_name": doc_header.get('issuer', {}).get('name'),
+                    "issuer_type": str(doc_header.get('issuer', {}).get('type')),
+                    "issuer_address_street": doc_header.get('issuer', {}).get('address', {}).get('street'),
+                    "issuer_address_building_number": doc_header.get('issuer', {}).get('address', {}).get('buildingNumber'),
+                    "issuer_address_governate": doc_header.get('issuer', {}).get('address', {}).get('governate'),
+                    # Receiver Info
+                    "receiver_id": doc_header.get('receiver', {}).get('id'), "receiver_name": doc_header.get('receiver', {}).get('name'),
+                    "receiver_type": str(doc_header.get('receiver', {}).get('type')),
+                    "receiver_address_street": doc_header.get('receiver', {}).get('address', {}).get('street'),
+                    "receiver_address_building_number": doc_header.get('receiver', {}).get('address', {}).get('buildingNumber'),
+                    "receiver_address_governate": doc_header.get('receiver', {}).get('address', {}).get('governate'),
+                    # Dates
                     "date_time_issued": doc_header.get('dateTimeIssued'),
-                    # TYPO FIX: Check for both 'dateTimeReceived' and the API's typo 'dateTimeRecevied'
                     "date_time_received": doc_data.get('dateTimeReceived') or doc_data.get('dateTimeRecevied'),
-                    "total_sales": doc_header.get('totalSales'),
-                    "total_discount": doc_header.get('totalDiscount'),
-                    "net_amount": doc_header.get('netAmount'),
-                    "total_amount": doc_header.get('totalAmount'),
-                    "status": doc_data.get('status')
+                    # Status
+                    "status": doc_data.get('status'), "document_status_reason": doc_data.get('documentStatusReason'),
+                    # Totals
+                    "total_amount": doc_data.get('totalAmount'), "net_amount": doc_data.get('netAmount'),
+                    "total_sales": doc_data.get('totalSales'), "total_discount": doc_data.get('totalDiscount'),
+                    "total_items_discount_amount": doc_data.get('totalItemsDiscountAmount'), "extra_discount_amount": doc_data.get('extraDiscountAmount'),
+                    # References
+                    "sales_order_reference": doc_data.get('salesOrderReference'), "purchase_order_reference": doc_data.get('purchaseOrderReference')
                 }
-                
-                header_sql = f"""
-                    INSERT INTO {header_table} (
-                        uuid, submission_uuid, internal_id, type_name, issuer_id, issuer_name, 
-                        receiver_id, receiver_name, date_time_issued, date_time_received, 
-                        total_sales, total_discount, net_amount, total_amount, status
-                    ) VALUES (
-                        %(uuid)s, %(submission_uuid)s, %(internal_id)s, %(type_name)s, %(issuer_id)s, %(issuer_name)s, 
-                        %(receiver_id)s, %(receiver_name)s, %(date_time_issued)s, %(date_time_received)s, 
-                        %(total_sales)s, %(total_discount)s, %(net_amount)s, %(total_amount)s, %(status)s
-                    );
-                """
+
+                # Dynamically populate tax fields
+                for i, tax_total in enumerate(doc_data.get('taxTotals', [])):
+                    if i >= 5: break # Don't exceed 5 tax fields
+                    header_data[f'tax{i+1}_type'] = tax_total.get('taxType')
+                    header_data[f'tax{i+1}_amount'] = tax_total.get('amount')
+
+                # Build the SQL statement with only the keys we have
+                columns = ', '.join(header_data.keys())
+                placeholders = ', '.join([f'%({key})s' for key in header_data.keys()])
+                header_sql = f"INSERT INTO {header_table} ({columns}) VALUES ({placeholders});"
                 cur.execute(header_sql, header_data)
 
-                # The invoice lines are always at the top level
+                # Process invoice lines
                 for line in doc_data.get('invoiceLines', []):
                     line_data = {
-                        "document_uuid": doc_data.get('uuid'),
-                        "description": line.get('description'),
-                        "item_code": line.get('itemCode'),
-                        "quantity": line.get('quantity'),
+                        "document_uuid": doc_data.get('uuid'), "description": line.get('description'),
+                        "item_type": line.get('itemType'), "item_code": line.get('itemCode'),
+                        "internal_code": line.get('internalCode'), "quantity": line.get('quantity'),
+                        "unit_type": line.get('unitType'),
                         "unit_value_amount_egp": line.get('unitValue', {}).get('amountEGP'),
-                        "sales_total": line.get('salesTotal'),
-                        "net_total": line.get('netTotal'),
-                        "total": line.get('total')
+                        "sales_total": line.get('salesTotal'), "net_total": line.get('netTotal'),
+                        "total": line.get('total'),
+                        "discount_rate": line.get('discount', {}).get('rate'),
+                        "discount_amount": line.get('discount', {}).get('amount')
                     }
-                    lines_sql = f"""
-                        INSERT INTO {lines_table} (
-                            document_uuid, description, item_code, quantity, 
-                            unit_value_amount_egp, sales_total, net_total, total
-                        ) VALUES (
-                            %(document_uuid)s, %(description)s, %(item_code)s, %(quantity)s, 
-                            %(unit_value_amount_egp)s, %(sales_total)s, %(net_total)s, %(total)s
-                        );
-                    """
+                    # Dynamically populate line tax fields
+                    for i, tax_item in enumerate(line.get('lineTaxableItems', [])):
+                        if i >= 5: break
+                        line_data[f'tax{i+1}_type'] = tax_item.get('taxType')
+                        line_data[f'tax{i+1}_amount'] = tax_item.get('amount')
+                    
+                    columns = ', '.join(line_data.keys())
+                    placeholders = ', '.join([f'%({key})s' for key in line_data.keys()])
+                    lines_sql = f"INSERT INTO {lines_table} ({columns}) VALUES ({placeholders});"
                     cur.execute(lines_sql, line_data)
                 
             self.conn.commit()
             return (True, "Success")
-
         except (psycopg2.Error, ValueError) as e:
             error_message = f"DB Error on doc {doc_data.get('uuid')}: {e}"
             print(error_message)
