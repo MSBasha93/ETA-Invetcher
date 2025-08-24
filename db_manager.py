@@ -219,3 +219,37 @@ class DatabaseManager:
             print(f"Failed to get latest invoice timestamp: {e}")
             self.conn.rollback()
             return None
+
+    def create_database(self, new_db_name):
+        """
+        Connects to the maintenance 'postgres' DB to create a new database.
+        Returns (True, "Success message") or (False, "Error message").
+        """
+        # Create a temporary connection config, overriding the dbname
+        # to connect to the default 'postgres' database.
+        temp_params = self.db_params.copy()
+        temp_params['dbname'] = 'postgres'
+        
+        conn = None
+        try:
+            # Establish the connection to the maintenance database
+            conn = psycopg2.connect(**temp_params)
+            # CREATE DATABASE cannot run inside a transaction, so we use autocommit.
+            conn.autocommit = True
+            
+            with conn.cursor() as cur:
+                # We use double quotes to handle case-sensitivity and special chars safely.
+                cur.execute(f'CREATE DATABASE "{new_db_name}";')
+            
+            return (True, f"Database '{new_db_name}' created successfully!")
+
+        except psycopg2.errors.DuplicateDatabase:
+            # This is the specific error for an existing DB. It's not a failure.
+            return (False, f"Database '{new_db_name}' already exists.")
+        except psycopg2.Error as e:
+            # Catch other errors like "permission denied"
+            print(f"Error creating database: {e}")
+            return (False, str(e).strip())
+        finally:
+            if conn:
+                conn.close()

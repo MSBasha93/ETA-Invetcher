@@ -144,6 +144,8 @@ class App(ctk.CTk):
         
         self.db_test_button = ctk.CTkButton(button_frame, text="Test & Save Connection", command=self.run_db_test)
         self.db_test_button.grid(row=0, column=1, padx=10)
+        self.db_create_button = ctk.CTkButton(button_frame, text="Create Database", command=self.run_db_create)
+        self.db_create_button.grid(row=0, column=2, padx=10)
         
         self.db_status_label = ctk.CTkLabel(self.db_frame, text="Status: Awaiting credentials...", text_color="gray")
         self.db_status_label.grid(row=3, column=0, columnspan=4, pady=5)
@@ -303,6 +305,18 @@ class App(ctk.CTk):
             
             elif message_type == "DB_STATUS_UPDATE":
                 self.db_status_label.configure(text=f"Status: {data}", text_color="orange")
+
+            elif message_type == "DB_CREATE_DONE":
+                success, message = data
+                self.db_create_button.configure(state="normal", text="Create Database")
+                self.db_test_button.configure(state="normal")
+                
+                if success:
+                    self.db_status_label.configure(text=f"Success: {message} Ready to test connection.", text_color="green")
+                    # For good UX, let's automatically test the connection now
+                    self.db_test_button.invoke() 
+                else:
+                    self.db_status_label.configure(text=f"Info: {message}", text_color="orange") # Use orange for "already exists"
 
             elif message_type == "DB_SCHEMA_DONE":
                 success = data
@@ -499,6 +513,31 @@ class App(ctk.CTk):
             self.log_message("--- Live Sync cancellation requested ---")
             self.live_sync_cancel_button.configure(state="disabled")
 
+    def run_db_create(self):
+        """Starts the database creation worker thread."""
+        db_name = self.db_name_entry.get()
+        if not db_name:
+            self.db_status_label.configure(text="Error: DB Name field cannot be empty to create a database.", text_color="red")
+            return
+            
+        db_params = { "host": self.db_host_entry.get(), "user": self.db_user_entry.get(), "password": self.db_pass_entry.get(), "port": 5432 }
+        if not all(db_params.values()):
+            self.db_status_label.configure(text="Error: Host, User, and Password fields are required.", text_color="red")
+            return
+
+        self.db_test_button.configure(state="disabled")
+        self.db_create_button.configure(state="disabled", text="Creating...")
+        self.db_status_label.configure(text=f"Status: Attempting to create '{db_name}'...", text_color="orange")
+
+        # We don't need a full DBManager instance, just the connection params
+        threading.Thread(target=self._db_create_worker, args=(db_params, db_name)).start()
+
+    def _db_create_worker(self, db_params, db_name):
+        """Worker that calls the new creation logic."""
+        # We create a temporary manager instance just for this operation
+        temp_db_manager = DatabaseManager(db_params)
+        success, message = temp_db_manager.create_database(db_name)
+        self.ui_queue.put(("DB_CREATE_DONE", (success, message)))
 
 if __name__ == "__main__":
     app = App()
