@@ -425,9 +425,16 @@ class App(ctk.CTk):
                 last_sync_info = statuses.get(client_api_id)
                 if last_sync_info:
                     ts, uuid, internal_id = last_sync_info
-                    sync_text = f"Up to doc '{internal_id or uuid[:8]}' on {ts.strftime('%Y-%m-%d')}"
+                # --- THIS IS THE CRASH FIX ---
+                # Build the display text safely, handling None for uuid/internal_id
+                doc_identifier = internal_id or (uuid[:8] if uuid else None)
+                if doc_identifier:
+                    sync_text = f"Up to doc '{doc_identifier}' on {ts.strftime('%Y-%m-%d')}"
                 else:
-                    sync_text = "Never Synced"
+                    # Fallback if both are None, which can happen after a historical sync
+                    sync_text = f"Synced up to {ts.strftime('%Y-%m-%d %H:%M')}"
+            else:
+                sync_text = "Never Synced"
 
             # Now create the UI labels with the fetched info
             ctk.CTkLabel(self.client_list_frame, text=name, font=ctk.CTkFont(weight="bold")).grid(row=i, column=0, sticky="w", padx=10, pady=5)

@@ -24,6 +24,7 @@ class SyncWorker(Thread):
         total_days = (self.end_date - self.start_date).days + 1
         processed_days = 0
 
+        newest_doc_in_run = {'timestamp': None, 'uuid': None, 'internal_id': None}
         while current_local_date <= self.end_date and self._is_running:
             day_start_local = cairo_tz.localize(datetime.datetime.combine(current_local_date, datetime.time.min))
             day_end_local = cairo_tz.localize(datetime.datetime.combine(current_local_date, datetime.time.max))
@@ -67,13 +68,26 @@ class SyncWorker(Thread):
                         if details:
                             success, message = self.db_manager.insert_document(details, table_prefix)
                             if success:
-                                # --- THIS IS THE ADDED LINE ---
-                                # Log progress for every successfully saved document
                                 self.progress_queue.put(("LOG", f"    -> Saved doc {i+1}/{len(all_summaries)} (UUID: {uuid[:8]}...)"))
+                                
+                                # --- NEW: Track the newest document found in this run ---
+                                doc_ts_str = details.get('dateTimeReceived') or details.get('dateTimeRecevied')
+                                if doc_ts_str:
+                                    if '.' in doc_ts_str and len(doc_ts_str.split('.')[1]) > 7:
+                                        doc_ts_str = doc_ts_str[:26] + "Z"
+                                    doc_dt = None
+                                    for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ"):
+                                        try:
+                                            doc_dt = datetime.datetime.strptime(doc_ts_str, fmt)
+                                            break
+                                        except ValueError: continue
+                                    
+                                    if doc_dt and (newest_doc_in_run['timestamp'] is None or doc_dt > newest_doc_in_run['timestamp']):
+                                        newest_doc_in_run['timestamp'] = doc_dt
+                                        newest_doc_in_run['uuid'] = details.get('uuid')
+                                        newest_doc_in_run['internal_id'] = details.get('internalID') or details.get('document', {}).get('internalId')
                             else:
                                 self.progress_queue.put(("LOG", f"DB_FAIL on doc {uuid[:8]}: {message}"))
-                        else:
-                            self.progress_queue.put(("LOG", f"API_FAIL: Could not get details for {uuid} after retries."))
                 
                 except Exception as e:
                     self.progress_queue.put(("LOG", f"CRITICAL ERROR on {current_local_date.strftime('%Y-%m-%d')} for {direction} docs: {e}"))
@@ -83,11 +97,13 @@ class SyncWorker(Thread):
             self.progress_queue.put(("PROGRESS", progress_percent))
             current_local_date += datetime.timedelta(days=1)
         
-        if self._is_running:
-            final_latest_ts = self.db_manager.get_latest_invoice_timestamp()
-            if final_latest_ts:
-                # We need to get the UUID and Internal ID of this latest doc to update status
-                # This part can be enhanced later, for now we save the time
-                self.db_manager.update_sync_status(self.api_client.client_id, final_latest_ts, None, None)
+        if self._is_running and newest_doc_in_run['timestamp']:
+            # Use the detailed info we tracked during the run
+            self.db_manager.update_sync_status(
+                self.api_client.client_id, 
+                newest_doc_in_run['timestamp'], 
+                newest_doc_in_run['uuid'], 
+                newest_doc_in_run['internal_id']
+            )
 
         self.progress_queue.put(("LOG", "Sync Finished!"))
