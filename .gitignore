@@ -2,3 +2,12 @@ settings.ini
 Backup
 venv
 __pycache__
+*.pyc
+build/
+dist/
+*.spec
+fernet_key.key
+.idea/
+.vscode/
+*.DS_Store
+ReadMe.txt
