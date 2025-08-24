@@ -142,28 +142,53 @@ class ETAApiClient:
         return None
 
     def find_oldest_invoice_date(self):
-        # ... (Keep the last working version of this function)
+        """
+        Finds the date of the oldest invoice by probing backwards. Extends the search
+        to 10 years and stops if a full year with no activity is found.
+        """
         print("Searching for the oldest invoice (this may take a moment)...")
         probe_end_date = datetime.utcnow()
-        last_found_date_str = None
-        for i in range(60):
+        last_found_date = None
+        consecutive_empty_months = 0
+
+        # Probe backwards month by month for up to 10 years (120 months)
+        for i in range(120):
             probe_start_date = probe_end_date - timedelta(days=30)
-            print(f"Probing for oldest: {probe_start_date.date()} to {probe_end_date.date()}...")
+            print(f"Probing date range: {probe_start_date.date()} to {probe_end_date.date()}...")
+            
             data = self.search_documents(probe_start_date, probe_end_date, page_size=1)
+
             if data and data.get('result'):
-                last_found_date_str = data['result'][0]['dateTimeReceived']
+                # We found activity. This period might contain the oldest doc.
+                # Store the date from this result and reset the empty counter.
+                last_found_date = data['result'][0]['dateTimeReceived']
+                consecutive_empty_months = 0
             else:
-                if last_found_date_str:
-                    print(f"Found oldest invoice date: {last_found_date_str}")
-                    if '.' in last_found_date_str and len(last_found_date_str.split('.')[1]) > 7:
-                         last_found_date_str = last_found_date_str[:26] + "Z"
-                    for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ"):
-                        try:
-                            return datetime.strptime(last_found_date_str, fmt)
-                        except ValueError:
-                            continue
-                    print(f"Warning: Could not parse date format for oldest invoice: {last_found_date_str}")
-                return None
+                # We found an empty period.
+                consecutive_empty_months += 1
+                
+                # --- NEW LOGIC: Stop if we find 12 consecutive empty months ---
+                if consecutive_empty_months >= 12:
+                    print("Found a full year with no invoice activity. Stopping search.")
+                    break # Exit the loop
+            
+            # Move our search window back for the next iteration
             probe_end_date = probe_start_date
-        print("Could not find any invoices after probing back 5 years.")
+        
+        # After the loop finishes (either by timeout or by stopping early),
+        # the last_found_date will hold the date from the oldest active month found.
+        if last_found_date:
+            print(f"Oldest invoice activity found around: {last_found_date}")
+            # Truncate to 6 microsecond digits for strptime compatibility
+            if '.' in last_found_date and len(last_found_date.split('.')[1]) > 7:
+                 last_found_date = last_found_date[:26] + "Z"
+
+            for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ"):
+                try:
+                    return datetime.strptime(last_found_date, fmt)
+                except ValueError:
+                    continue
+            print(f"Warning: Could not parse date format for oldest invoice: {last_found_date}")
+        
+        print("Could not find any invoices after probing back.")
         return None
