@@ -345,11 +345,16 @@ class App(ctk.CTk):
             elif message_type == "LIVE_UPDATE":
                 client_name, status_text = data
                 if client_name in self.live_sync_client_labels:
+                    # This part is correct, it updates the 'status' label
                     self.live_sync_client_labels[client_name]['status'].configure(text=status_text)
-                if "Done" in status_text or "Fail" in status_text:
-                    if all("Done" in lbl.cget("text") or "Fail" in lbl.cget("text") for lbl in self.live_sync_client_labels.values()):
-                        self.live_sync_start_button.configure(state="normal")
-                        self.live_sync_cancel_button.configure(state="disabled")
+                
+                # --- THIS IS THE CRASH FIX ---
+                # We need to check the 'status' label inside each dictionary value
+                if all("Done" in lbl_dict['status'].cget("text") or "Fail" in lbl_dict['status'].cget("text") for lbl_dict in self.live_sync_client_labels.values()):
+                    self.live_sync_start_button.configure(state="normal")
+                    self.live_sync_cancel_button.configure(state="disabled")
+                    self.live_sync_refresh_button.configure(state="normal") # Also re-enable refresh
+                    
             elif message_type == "LIVE_SYNC_COMPLETE":
                 self.live_sync_start_button.configure(state="normal")
                 self.live_sync_cancel_button.configure(state="disabled")
@@ -384,47 +389,56 @@ class App(ctk.CTk):
         self.client_list_frame.grid_columnconfigure(2, weight=1)
 
     def populate_live_sync_frame(self):
-        """Prepares the Live Sync UI, populates the client list, and sets button states correctly."""
+        """
+        Prepares the Live Sync UI by connecting to EACH client's database
+        to fetch their individual, accurate sync status.
+        """
         for widget in self.client_list_frame.winfo_children():
             widget.destroy()
         self.live_sync_client_labels = {}
 
-        # The crash fix for DB connection is already in this method
-        db_params = { 'host': self.db_host_entry.get(), 'dbname': self.db_name_entry.get(), 'user': self.db_user_entry.get(), 'password': self.db_pass_entry.get(), 'port': 5432 }
-        temp_db_manager = DatabaseManager(db_params)
-        statuses = {}
-        if temp_db_manager.connect():
-            statuses = temp_db_manager.get_all_sync_statuses()
-            temp_db_manager.disconnect()
-
-        # --- THIS IS THE CRITICAL FIX ---
-        # Check if there are any clients configured *before* building the list
         if not self.clients:
             ctk.CTkLabel(self.client_list_frame, text="No clients have been configured yet.").pack(pady=20)
-            self.live_sync_start_button.configure(state="disabled") # Disable the button
-            return # Stop here
+            self.live_sync_start_button.configure(state="disabled")
+            return
 
-        # If we have clients, enable the button
         self.live_sync_start_button.configure(state="normal")
         
-        # Now, proceed with populating the list for each client
+        # --- NEW LOGIC: Iterate through each client and connect to their DB ---
         for i, (name, config) in enumerate(self.clients.items()):
-            client_id = config.get('client_id')
-            last_sync_info = statuses.get(client_id)
+            db_params = {
+                'host': config.get('db_host'), 'dbname': config.get('db_name'),
+                'user': config.get('db_user'), 'password': config.get('db_pass'),
+                'port': config.get('db_port', 5432)
+            }
+            # This key was named 'tax_id' previously, but should be 'client_id' from the API
+            client_api_id = config.get('client_id') 
             
-            if last_sync_info:
-                ts, uuid, internal_id = last_sync_info
-                sync_text = f"Up to doc '{internal_id or uuid[:8]}' on {ts.strftime('%Y-%m-%d')}"
-            else:
-                sync_text = "Never Synced"
+            # Create a temporary DB manager for this client
+            temp_db_manager = DatabaseManager(db_params)
+            sync_text = "DB Conn Fail" # Default text
+            
+            if temp_db_manager.connect():
+                statuses = temp_db_manager.get_all_sync_statuses()
+                temp_db_manager.disconnect()
+                # Use the client's API ID to look up their status
+                last_sync_info = statuses.get(client_api_id)
+                if last_sync_info:
+                    ts, uuid, internal_id = last_sync_info
+                    sync_text = f"Up to doc '{internal_id or uuid[:8]}' on {ts.strftime('%Y-%m-%d')}"
+                else:
+                    sync_text = "Never Synced"
 
+            # Now create the UI labels with the fetched info
             ctk.CTkLabel(self.client_list_frame, text=name, font=ctk.CTkFont(weight="bold")).grid(row=i, column=0, sticky="w", padx=10, pady=5)
+            # --- TYPO FIX: Changed ck to ctk ---
             last_sync_label = ctk.CTkLabel(self.client_list_frame, text=sync_text, anchor="w")
             last_sync_label.grid(row=i, column=1, sticky="w", padx=10)
             status_label = ctk.CTkLabel(self.client_list_frame, text="Idle", text_color="gray", anchor="e")
             status_label.grid(row=i, column=2, sticky="ew", padx=10)
             
             self.live_sync_client_labels[name] = {'main': last_sync_label, 'status': status_label}
+
     def show_frame(self, frame_to_show):
         """Hides all main content frames and shows the specified one in the correct layout."""
         # --- THE CRITICAL FIX: Explicitly hide ALL possible main content frames ---
@@ -506,6 +520,7 @@ class App(ctk.CTk):
         self.live_sync_cancel_button.configure(state="normal")
         self.live_sync_refresh_button.configure(state="disabled") # Disable refresh during sync
         self.live_sync_worker_thread = LiveSyncWorker(self.clients, self.ui_queue)
+        self.live_sync_worker_thread.daemon = True # This is the critical fix for not stopping.
         self.live_sync_worker_thread.start()
     def cancel_live_sync(self):
         if self.live_sync_worker_thread and self.live_sync_worker_thread.is_alive():

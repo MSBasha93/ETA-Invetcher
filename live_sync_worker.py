@@ -21,6 +21,7 @@ class LiveSyncWorker(Thread):
         now_in_cairo = datetime.datetime.now(cairo_tz)
 
         for client_name, client_config in self.all_clients.items():
+            if not self._is_running: break
             if not self._is_running:
                 self.progress_queue.put(("LOG", "Live Sync cancelled by user."))
                 return
@@ -61,6 +62,7 @@ class LiveSyncWorker(Thread):
             current_local_date = start_date.date()
 
             while current_local_date <= now_in_cairo.date() and self._is_running:
+                if not self._is_running: break
                 # --- LOGGING FIX: Report the day being processed ---
                 self.progress_queue.put(("LOG", f"  -> Processing Day: {current_local_date.strftime('%Y-%m-%d')} for {client_name}"))
                 day_start_local = cairo_tz.localize(datetime.datetime.combine(current_local_date, datetime.time.min))
