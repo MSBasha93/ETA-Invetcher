@@ -2,6 +2,7 @@
 from threading import Thread
 import datetime
 import pytz
+import config_manager
 from api_client import ETAApiClient
 from db_manager import DatabaseManager
 

@@ -33,6 +33,7 @@ class App(ctk.CTk):
 
         self.live_sync_worker_thread = None
         self.live_sync_client_labels = {} # To hold labels for live updates
+        self.live_sync_client_checkboxes = {}
         self.discovered_oldest_date = None
         self.current_logfile = None
         os.makedirs("logs", exist_ok=True) # Creates the 'logs' directory if it doesn't exist
@@ -423,7 +424,10 @@ class App(ctk.CTk):
         self.client_list_frame = ctk.CTkScrollableFrame(self.live_sync_frame, label_text="Client Sync Status")
         self.client_list_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=10)
         self.live_sync_frame.grid_rowconfigure(1, weight=1)
-        self.client_list_frame.grid_columnconfigure(2, weight=1)
+        # Give the checkbox (0) and status (2) columns a fixed weight
+        self.client_list_frame.grid_columnconfigure((0, 2), weight=0)
+        # Give the main text label (1) all the extra space so it can expand
+        self.client_list_frame.grid_columnconfigure(1, weight=1)
 
     def populate_live_sync_frame(self):
         """
@@ -434,24 +438,23 @@ class App(ctk.CTk):
         for widget in self.client_list_frame.winfo_children():
             widget.destroy()
         self.live_sync_client_labels = {}
+        self.live_sync_client_checkboxes = {}
 
         if not self.clients:
             ctk.CTkLabel(self.client_list_frame, text="No clients have been configured yet.").pack(pady=20)
             self.live_sync_start_button.configure(state="disabled")
             return
 
+        # --- NEW: Add a "Select All" checkbox at the top ---
+        self.select_all_var = ctk.IntVar(value=1)
+        select_all_checkbox = ctk.CTkCheckBox(self.client_list_frame, text="Select All", variable=self.select_all_var, command=self.toggle_all_clients)
+        select_all_checkbox.grid(row=0, column=0, sticky="w", padx=10, pady=(5, 10))
+
         self.live_sync_start_button.configure(state="normal")
         
-        for i, (name, config) in enumerate(self.clients.items()):
-            # --- THIS IS THE CRITICAL FIX ---
-            # All logic is now fully contained, preventing UnboundLocalError
-            sync_text = "Never Synced" # Start with a safe default
-            
-            db_params = {
-                'host': config.get('db_host'), 'dbname': config.get('db_name'),
-                'user': config.get('db_user'), 'password': config.get('db_pass'),
-                'port': int(config.get('db_port', 5432))
-            }
+        for i, (name, config) in enumerate(self.clients.items(), start=1):
+            sync_text = "Never Synced"
+            db_params = { 'host': config.get('db_host'), 'dbname': config.get('db_name'), 'user': config.get('db_user'), 'password': config.get('db_pass'), 'port': int(config.get('db_port', 5432)) }
             client_api_id = config.get('client_id')
             temp_db_manager = DatabaseManager(db_params)
             
@@ -470,13 +473,29 @@ class App(ctk.CTk):
                 sync_text = "DB Conn Fail"
 
             # Now create the UI labels with the guaranteed-to-exist sync_text
-            ctk.CTkLabel(self.client_list_frame, text=name, font=ctk.CTkFont(weight="bold")).grid(row=i, column=0, sticky="w", padx=10, pady=5)
+            # --- NEW: Add an individual checkbox for each client ---
+            checkbox_var = ctk.IntVar(value=1)
+            checkbox = ctk.CTkCheckBox(self.client_list_frame, text="", variable=checkbox_var)
+            checkbox.grid(row=i, column=0, sticky="w", padx=(10,0))
+            self.live_sync_client_checkboxes[name] = checkbox_var
+
+            name_label = ctk.CTkLabel(self.client_list_frame, text=name, font=ctk.CTkFont(weight="bold"), anchor="w")
+            name_label.grid(row=i, column=1, sticky="ew", padx=(5, 10))
+            
             last_sync_label = ctk.CTkLabel(self.client_list_frame, text=sync_text, anchor="w")
-            last_sync_label.grid(row=i, column=1, sticky="w", padx=10)
+            last_sync_label.grid(row=i, column=2, sticky="ew", padx=10)
+            
             status_label = ctk.CTkLabel(self.client_list_frame, text="Idle", text_color="gray", anchor="e")
-            status_label.grid(row=i, column=2, sticky="ew", padx=10)
+            status_label.grid(row=i, column=3, sticky="ew", padx=10)
             
             self.live_sync_client_labels[name] = {'main': last_sync_label, 'status': status_label}
+    
+    def toggle_all_clients(self):
+        """Checks or unchecks all client checkboxes based on the 'Select All' state."""
+        new_state = self.select_all_var.get()
+        for checkbox_var in self.live_sync_client_checkboxes.values():
+            checkbox_var.set(new_state)
+    
     def show_frame(self, frame_to_show):
         """Hides all main content frames and shows the specified one in the correct layout."""
         # --- THE CRITICAL FIX: Explicitly hide ALL possible main content frames ---
@@ -585,15 +604,29 @@ class App(ctk.CTk):
             self.log_textbox.see("end")
     
     def start_live_sync(self):
+         # --- NEW: Build a dictionary of only the selected clients ---
+        selected_clients_data = {}
+        for name, checkbox_var in self.live_sync_client_checkboxes.items():
+            if checkbox_var.get() == 1:
+                selected_clients_data[name] = self.clients[name]
+
+        if not selected_clients_data:
+            messagebox.showinfo("Live Sync", "No clients were selected to sync.")
+            return
+
         self.live_sync_start_button.configure(state="disabled")
         # --- NEW: Create and set the log file for this session ---
         timestamp = datetime.datetime.now().strftime('%Y-%m-%d_%H%M%S')
         self.current_logfile = f"logs/LiveSync_AllClients_{timestamp}.txt"
+
         self.live_sync_cancel_button.configure(state="normal")
         self.live_sync_refresh_button.configure(state="disabled") # Disable refresh during sync
-        self.live_sync_worker_thread = LiveSyncWorker(self.clients, self.ui_queue)
-        self.live_sync_worker_thread.daemon = True # This is the critical fix for not stopping.
+
+        # --- NEW: Pass only the selected clients to the worker ---
+        self.live_sync_worker_thread = LiveSyncWorker(selected_clients_data, self.ui_queue)
+        self.live_sync_worker_thread.daemon = True
         self.live_sync_worker_thread.start()
+
     def cancel_live_sync(self):
         if self.live_sync_worker_thread and self.live_sync_worker_thread.is_alive():
             self.live_sync_worker_thread.stop()
