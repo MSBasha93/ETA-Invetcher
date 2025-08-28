@@ -428,7 +428,8 @@ class App(ctk.CTk):
     def populate_live_sync_frame(self):
         """
         Prepares the Live Sync UI by connecting to EACH client's database
-        to fetch their individual, accurate sync status.
+        to fetch their individual, accurate sync status. This version is resilient
+        to clients that have never been synced.
         """
         for widget in self.client_list_frame.winfo_children():
             widget.destroy()
@@ -441,48 +442,41 @@ class App(ctk.CTk):
 
         self.live_sync_start_button.configure(state="normal")
         
-        # --- NEW LOGIC: Iterate through each client and connect to their DB ---
         for i, (name, config) in enumerate(self.clients.items()):
+            # --- THIS IS THE CRITICAL FIX ---
+            # All logic is now fully contained, preventing UnboundLocalError
+            sync_text = "Never Synced" # Start with a safe default
+            
             db_params = {
                 'host': config.get('db_host'), 'dbname': config.get('db_name'),
                 'user': config.get('db_user'), 'password': config.get('db_pass'),
-                'port': config.get('db_port', 5432)
+                'port': int(config.get('db_port', 5432))
             }
-            # This key was named 'tax_id' previously, but should be 'client_id' from the API
-            client_api_id = config.get('client_id') 
-            
-            # Create a temporary DB manager for this client
+            client_api_id = config.get('client_id')
             temp_db_manager = DatabaseManager(db_params)
-            sync_text = "DB Conn Fail" # Default text
             
             if temp_db_manager.connect():
                 statuses = temp_db_manager.get_all_sync_statuses()
                 temp_db_manager.disconnect()
-                # Use the client's API ID to look up their status
                 last_sync_info = statuses.get(client_api_id)
                 if last_sync_info:
                     ts, uuid, internal_id = last_sync_info
-                # --- THIS IS THE CRASH FIX ---
-                # Build the display text safely, handling None for uuid/internal_id
-                doc_identifier = internal_id or (uuid[:8] if uuid else None)
-                if doc_identifier:
-                    sync_text = f"Up to doc '{doc_identifier}' on {ts.strftime('%Y-%m-%d')}"
-                else:
-                    # Fallback if both are None, which can happen after a historical sync
-                    sync_text = f"Synced up to {ts.strftime('%Y-%m-%d %H:%M')}"
+                    doc_identifier = (uuid[:8] if uuid else None)
+                    if doc_identifier:
+                        sync_text = f"Up to doc '{doc_identifier}' on {ts.strftime('%Y-%m-%d')}"
+                    else:
+                        sync_text = f"Synced up to {ts.strftime('%Y-%m-%d %H:%M')}"
             else:
-                sync_text = "Never Synced"
+                sync_text = "DB Conn Fail"
 
-            # Now create the UI labels with the fetched info
+            # Now create the UI labels with the guaranteed-to-exist sync_text
             ctk.CTkLabel(self.client_list_frame, text=name, font=ctk.CTkFont(weight="bold")).grid(row=i, column=0, sticky="w", padx=10, pady=5)
-            # --- TYPO FIX: Changed ck to ctk ---
             last_sync_label = ctk.CTkLabel(self.client_list_frame, text=sync_text, anchor="w")
             last_sync_label.grid(row=i, column=1, sticky="w", padx=10)
             status_label = ctk.CTkLabel(self.client_list_frame, text="Idle", text_color="gray", anchor="e")
             status_label.grid(row=i, column=2, sticky="ew", padx=10)
             
             self.live_sync_client_labels[name] = {'main': last_sync_label, 'status': status_label}
-
     def show_frame(self, frame_to_show):
         """Hides all main content frames and shows the specified one in the correct layout."""
         # --- THE CRITICAL FIX: Explicitly hide ALL possible main content frames ---
