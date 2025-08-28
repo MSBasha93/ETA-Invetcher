@@ -13,7 +13,7 @@ import config_manager
 from api_client import ETAApiClient
 from db_manager import DatabaseManager
 from sync_worker import SyncWorker
-from live_sync_worker import LiveSyncWorker # NEW IMPORT
+from live_sync_manager import LiveSyncManager # NEW IMPORT
 
 class App(ctk.CTk):
     def __init__(self):
@@ -623,7 +623,7 @@ class App(ctk.CTk):
         self.live_sync_refresh_button.configure(state="disabled") # Disable refresh during sync
 
         # --- NEW: Pass only the selected clients to the worker ---
-        self.live_sync_worker_thread = LiveSyncWorker(selected_clients_data, self.ui_queue)
+        self.live_sync_worker_thread = LiveSyncManager(selected_clients_data, self.ui_queue)
         self.live_sync_worker_thread.daemon = True
         self.live_sync_worker_thread.start()
 
