@@ -150,83 +150,71 @@ class DatabaseManager:
         table_name = f"{table_prefix}documents"; query = f"SELECT 1 FROM {table_name} WHERE uuid = %s"
         with self.conn.cursor() as cur: cur.execute(query, (uuid,)); return cur.fetchone() is not None
     
+# In db_manager.py
+
     def insert_document(self, doc_data, table_prefix=""):
-        self._ensure_connection()
+        """
+        Inserts a single document, correctly parsing ALL known JSON structures by
+        first identifying the correct source object for the main invoice data.
+        """
         header_table = f"{table_prefix}documents"
         lines_table = f"{table_prefix}document_lines"
         
         try:
             with self.conn.cursor() as cur:
-                doc_header = doc_data.get('document', doc_data)
+                # --- THIS IS THE FINAL, CORRECT LOGIC ---
+                # Determine the object that contains the core invoice data.
+                # For Sent docs, this is doc_data['document']. For Received/Cancelled, it's doc_data itself.
+                core_data_object = doc_data.get('document', doc_data)
 
-                # Prepare header data with safe access using .get()
+                # Now, extract all data, using the correct source object for each piece.
                 header_data = {
-                    "uuid": doc_data.get('uuid'), "submission_uuid": doc_data.get('submissionUUID'),
-                    "internal_id": doc_header.get('internalID'), "type_name": doc_header.get('documentType'),
-                    "document_type_version": doc_header.get('documentTypeVersion'),
-                    # Issuer Info
-                    "issuer_id": doc_header.get('issuer', {}).get('id'), "issuer_name": doc_header.get('issuer', {}).get('name'),
-                    "issuer_type": str(doc_header.get('issuer', {}).get('type')),
-                    "issuer_address_street": doc_header.get('issuer', {}).get('address', {}).get('street'),
-                    "issuer_address_building_number": doc_header.get('issuer', {}).get('address', {}).get('buildingNumber'),
-                    "issuer_address_governate": doc_header.get('issuer', {}).get('address', {}).get('governate'),
-                    # Receiver Info
-                    "receiver_id": doc_header.get('receiver', {}).get('id'), "receiver_name": doc_header.get('receiver', {}).get('name'),
-                    "receiver_type": str(doc_header.get('receiver', {}).get('type')),
-                    "receiver_address_street": doc_header.get('receiver', {}).get('address', {}).get('street'),
-                    "receiver_address_building_number": doc_header.get('receiver', {}).get('address', {}).get('buildingNumber'),
-                    "receiver_address_governate": doc_header.get('receiver', {}).get('address', {}).get('governate'),
-                    # Dates
-                    "date_time_issued": doc_header.get('dateTimeIssued'),
+                    # Get these from the top-level `doc_data` as they are always present
+                    "uuid": doc_data.get('uuid'),
+                    "submission_uuid": doc_data.get('submissionUUID'),
+                    "status": doc_data.get('status'),
+                    "total_amount": doc_data.get('totalAmount'),
+                    "net_amount": doc_data.get('netAmount'),
+                    "total_sales": doc_data.get('totalSales'),
+                    "total_discount": doc_data.get('totalDiscount'),
                     "date_time_received": doc_data.get('dateTimeReceived') or doc_data.get('dateTimeRecevied'),
-                    # Status
-                    "status": doc_data.get('status'), "document_status_reason": doc_data.get('documentStatusReason'),
-                    # Totals
-                    "total_amount": doc_data.get('totalAmount'), "net_amount": doc_data.get('netAmount'),
-                    "total_sales": doc_data.get('totalSales'), "total_discount": doc_data.get('totalDiscount'),
-                    "total_items_discount_amount": doc_data.get('totalItemsDiscountAmount'), "extra_discount_amount": doc_data.get('extraDiscountAmount'),
-                    # References
-                    "sales_order_reference": doc_data.get('salesOrderReference'), "purchase_order_reference": doc_data.get('purchaseOrderReference')
+                    "document_status_reason": doc_data.get('documentStatusReason'),
+
+                    # Get these from the `core_data_object`
+                    "internal_id": core_data_object.get('internalID') or core_data_object.get('internalId'),
+                    "type_name": core_data_object.get('documentType'),
+                    "date_time_issued": core_data_object.get('dateTimeIssued'),
+                    "issuer_id": core_data_object.get('issuer', {}).get('id'),
+                    "issuer_name": core_data_object.get('issuer', {}).get('name'),
+                    "receiver_id": core_data_object.get('receiver', {}).get('id'),
+                    "receiver_name": core_data_object.get('receiver', {}).get('name')
                 }
-
-                # Dynamically populate tax fields
-                for i, tax_total in enumerate(doc_data.get('taxTotals', [])):
-                    if i >= 5: break # Don't exceed 5 tax fields
-                    header_data[f'tax{i+1}_type'] = tax_total.get('taxType')
-                    header_data[f'tax{i+1}_amount'] = tax_total.get('amount')
-
-                # Build the SQL statement with only the keys we have
+                
+                # Build and execute the SQL for the header
                 columns = ', '.join(header_data.keys())
                 placeholders = ', '.join([f'%({key})s' for key in header_data.keys()])
                 header_sql = f"INSERT INTO {header_table} ({columns}) VALUES ({placeholders});"
                 cur.execute(header_sql, header_data)
 
-                # Process invoice lines
-                for line in doc_data.get('invoiceLines', []):
+                # --- THIS IS THE CRITICAL FIX FOR INVOICE LINES ---
+                # We now correctly get the invoiceLines from the `core_data_object`.
+                for line in core_data_object.get('invoiceLines', []):
                     line_data = {
-                        "document_uuid": doc_data.get('uuid'), "description": line.get('description'),
-                        "item_type": line.get('itemType'), "item_code": line.get('itemCode'),
-                        "internal_code": line.get('internalCode'), "quantity": line.get('quantity'),
-                        "unit_type": line.get('unitType'),
-                        "unit_value_amount_egp": line.get('unitValue', {}).get('amountEGP'),
-                        "sales_total": line.get('salesTotal'), "net_total": line.get('netTotal'),
-                        "total": line.get('total'),
-                        "discount_rate": line.get('discount', {}).get('rate'),
-                        "discount_amount": line.get('discount', {}).get('amount')
+                        "document_uuid": doc_data.get('uuid'),
+                        "description": line.get('description'),
+                        "item_code": line.get('itemCode'),
+                        "quantity": line.get('quantity'),
+                        "net_total": line.get('netTotal'),
+                        "total": line.get('total')
                     }
-                    # Dynamically populate line tax fields
-                    for i, tax_item in enumerate(line.get('lineTaxableItems', [])):
-                        if i >= 5: break
-                        line_data[f'tax{i+1}_type'] = tax_item.get('taxType')
-                        line_data[f'tax{i+1}_amount'] = tax_item.get('amount')
-                    
-                    columns = ', '.join(line_data.keys())
-                    placeholders = ', '.join([f'%({key})s' for key in line_data.keys()])
-                    lines_sql = f"INSERT INTO {lines_table} ({columns}) VALUES ({placeholders});"
+                    line_columns = ', '.join(line_data.keys())
+                    line_placeholders = ', '.join([f'%({key})s' for key in line_data.keys()])
+                    lines_sql = f"INSERT INTO {lines_table} ({line_columns}) VALUES ({line_placeholders});"
                     cur.execute(lines_sql, line_data)
                 
             self.conn.commit()
             return (True, "Success")
+
         except (psycopg2.Error, ValueError) as e:
             error_message = f"DB Error on doc {doc_data.get('uuid')}: {e}"
             print(error_message)

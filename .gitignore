@@ -11,3 +11,5 @@ fernet_key.key
 .vscode/
 *.DS_Store
 ReadMe.txt
+test-received.py
+test-received-old.py
