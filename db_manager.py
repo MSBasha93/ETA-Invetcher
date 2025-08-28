@@ -20,6 +20,12 @@ class DatabaseManager:
         if self.conn:
             self.conn.close()
 
+    def _ensure_connection(self):
+        """Checks if the connection is open and reconnects if it's not."""
+        if self.conn is None or self.conn.closed != 0:
+            print("Database connection is closed. Reconnecting...")
+            self.connect()
+
     def check_and_create_tables(self):
         """
         Creates the FULL, detailed schema matching your 'menna' database.
@@ -140,13 +146,12 @@ class DatabaseManager:
             
     # --- document_exists and insert_document methods from the previous version remain the same ---
     def document_exists(self, uuid, table_prefix=""):
+        self._ensure_connection()
         table_name = f"{table_prefix}documents"; query = f"SELECT 1 FROM {table_name} WHERE uuid = %s"
         with self.conn.cursor() as cur: cur.execute(query, (uuid,)); return cur.fetchone() is not None
     
     def insert_document(self, doc_data, table_prefix=""):
-        """
-        Inserts a single document, mapping the full API response to the detailed schema.
-        """
+        self._ensure_connection()
         header_table = f"{table_prefix}documents"
         lines_table = f"{table_prefix}document_lines"
         
@@ -229,10 +234,7 @@ class DatabaseManager:
             return (False, str(e).strip())
 
     def get_latest_invoice_timestamp(self):
-        """
-        Finds the most recent 'date_time_received' across both documents
-        and sent_documents tables without needing an ID.
-        """
+        self._ensure_connection()
         query = """
             SELECT MAX(date_time_received) FROM (
                 SELECT date_time_received FROM documents
