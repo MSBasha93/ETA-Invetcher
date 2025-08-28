@@ -13,3 +13,4 @@ fernet_key.key
 ReadMe.txt
 test-received.py
 test-received-old.py
+logs/

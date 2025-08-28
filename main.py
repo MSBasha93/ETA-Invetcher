@@ -1,4 +1,6 @@
 # main.py
+import os
+from tkinter import messagebox
 import customtkinter as ctk
 from tkcalendar import DateEntry
 import datetime
@@ -32,6 +34,8 @@ class App(ctk.CTk):
         self.live_sync_worker_thread = None
         self.live_sync_client_labels = {} # To hold labels for live updates
         self.discovered_oldest_date = None
+        self.current_logfile = None
+        os.makedirs("logs", exist_ok=True) # Creates the 'logs' directory if it doesn't exist
         self.create_client_management_frame()
         self.create_eta_setup_frame()
         self.create_db_setup_frame()
@@ -192,6 +196,10 @@ class App(ctk.CTk):
         self.progressbar = ctk.CTkProgressBar(self, orientation="horizontal")
         self.progressbar.grid(row=4, column=0, sticky="ew", padx=10, pady=(0, 10))
         self.progressbar.set(0)
+        # --- NEW: Create and set the log file for this session ---
+        client_name_safe = self.selected_client_name.get().replace(" ", "_").replace("/", "-")
+        timestamp = datetime.datetime.now().strftime('%Y-%m-%d_%H%M%S')
+        self.current_logfile = f"logs/Historical_{client_name_safe}_{timestamp}.txt"
 
     # --- NEW: Worker Threads with improved logic ---
     def run_eta_auth_test(self):
@@ -357,7 +365,8 @@ class App(ctk.CTk):
                     
             elif message_type == "HISTORICAL_SYNC_COMPLETE":
                 skipped_days = data
-                self.log_message(f"Sync Finished! Found {len(skipped_days)} skipped days to retry later.")
+                final_message = f"Sync Finished! Found {len(skipped_days)} skipped days to retry later."
+                self.log_message(final_message)
                 
                 # Save the new list of skipped days to the config
                 client_name = self.client_name_entry.get()
@@ -379,12 +388,15 @@ class App(ctk.CTk):
                 
                 self.sync_button.configure(state="normal")
                 self.cancel_button.configure(state="disabled")
+                messagebox.showinfo("Historical Sync", final_message)
+                self.current_logfile = None # --- NEW: Close the log file ---
 
             elif message_type == "LIVE_SYNC_COMPLETE":
                 self.live_sync_start_button.configure(state="normal")
                 self.live_sync_cancel_button.configure(state="disabled")
                 self.live_sync_refresh_button.configure(state="normal")
                 messagebox.showinfo("Live Sync", "Live sync for all clients is complete.")
+                self.current_logfile = None # --- NEW: Close the log file ---
         except queue.Empty: pass
         finally: self.after(100, self.process_queue)
 
@@ -538,17 +550,51 @@ class App(ctk.CTk):
         start_date, end_date = self.start_date_entry.get_date(), self.end_date_entry.get_date()
         self.sync_worker_thread = SyncWorker(self.api_client.client_id, self.api_client, self.db_manager, start_date, end_date, self.ui_queue)
         self.sync_worker_thread.start()
+        
+        # --- NEW: Create and set the log file for this session (Robust version) ---
+        # 1. Try the text entry box first, as it might have been edited.
+        client_name = self.client_name_entry.get()
+        # 2. If it's empty, fall back to the dropdown's selected value.
+        if not client_name:
+            client_name = self.selected_client_name.get()
+        # 3. As a final failsafe, if it's still invalid, use a default.
+        if not client_name or client_name == "No clients configured":
+            client_name = "Untitled_Client"
+        
+        client_name_safe = client_name.replace(" ", "_").replace("/", "-")
+        timestamp = datetime.datetime.now().strftime('%Y-%m-%d_%H%M%S')
+        self.current_logfile = f"logs/Historical_{client_name_safe}_{timestamp}.txt"
     def cancel_sync(self):
         if self.sync_worker_thread and self.sync_worker_thread.is_alive():
             self.sync_worker_thread.stop(); self.log_message("--- Cancellation requested ---"); self.cancel_button.configure(state="disabled")
+            self.current_logfile = None # --- NEW: Close the log file on cancellation ---
     def log_message(self, message):
+        """Appends a message to the UI textbox AND the external log file."""
+        should_autoscroll = self.log_textbox.yview()[1] == 1.0
+        
+        # --- NEW: Write to external log file first ---
+        if self.current_logfile:
+            try:
+                with open(self.current_logfile, 'a', encoding='utf-8') as f:
+                    # Write the full, timestamped message to the file
+                    f.write(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - {message}\n")
+            except Exception as e:
+                # If logging fails, print to console but don't crash the app
+                print(f"!!! FAILED TO WRITE TO LOG FILE {self.current_logfile}: {e}")
+
+        # Update the on-screen textbox
         self.log_textbox.configure(state="normal")
         self.log_textbox.insert("end", f"{datetime.datetime.now().strftime('%H:%M:%S')} - {message}\n")
         self.log_textbox.configure(state="disabled")
-        self.log_textbox.see("end")
+
+        if should_autoscroll:
+            self.log_textbox.see("end")
     
     def start_live_sync(self):
         self.live_sync_start_button.configure(state="disabled")
+        # --- NEW: Create and set the log file for this session ---
+        timestamp = datetime.datetime.now().strftime('%Y-%m-%d_%H%M%S')
+        self.current_logfile = f"logs/LiveSync_AllClients_{timestamp}.txt"
         self.live_sync_cancel_button.configure(state="normal")
         self.live_sync_refresh_button.configure(state="disabled") # Disable refresh during sync
         self.live_sync_worker_thread = LiveSyncWorker(self.clients, self.ui_queue)
@@ -559,6 +605,7 @@ class App(ctk.CTk):
             self.live_sync_worker_thread.stop()
             self.log_message("--- Live Sync cancellation requested ---")
             self.live_sync_cancel_button.configure(state="disabled")
+            self.current_logfile = None # --- NEW: Close the log file on cancellation ---
 
     def run_db_create(self):
         """Starts the database creation worker thread."""
