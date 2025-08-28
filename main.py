@@ -103,7 +103,7 @@ class App(ctk.CTk):
                 # Define all possible fields, including the new ones
                 fieldnames = [
                     'client_name', 'client_id', 'client_secret', 'db_host', 'db_port', 
-                    'db_name', 'db_user', 'db_pass', 'oldest_invoice_date', 'date_span'
+                    'db_name', 'db_user', 'db_pass', 'oldest_invoice_date', 'date_span','skipped_days'
                 ]
                 writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
                 writer.writeheader()
@@ -379,7 +379,7 @@ class App(ctk.CTk):
                 
                 self.sync_button.configure(state="normal")
                 self.cancel_button.configure(state="disabled")
-                        
+
             elif message_type == "LIVE_SYNC_COMPLETE":
                 self.live_sync_start_button.configure(state="normal")
                 self.live_sync_cancel_button.configure(state="disabled")

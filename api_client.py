@@ -51,30 +51,36 @@ class ETAApiClient:
         return self.access_token if success else None
 
     def _make_request(self, method, url, **kwargs):
-        """A centralized and resilient request handler with retries."""
+        """A centralized and resilient request handler with retries and intelligent error handling."""
         max_retries = 3
         for attempt in range(max_retries):
             try:
                 self._enforce_rate_limit()
                 response = requests.request(method, url, **kwargs)
-                if response.status_code == 429: # Specifically handle rate limit error
-                    wait_time = 5 * (attempt + 1) # Wait longer each time
-                    print(f"Rate limit hit (429). Retrying in {wait_time} seconds...")
-                    time.sleep(wait_time)
-                    continue # Go to next attempt
-                
-                response.raise_for_status() # Raise HTTPError for other bad responses (4xx or 5xx)
+                response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
                 return response.json()
+
+            except requests.exceptions.HTTPError as e:
+                # --- THIS IS THE CRITICAL FIX ---
+                # If we get a 400 error specifically on the search endpoint,
+                # treat it as a valid "no results" response instead of a fatal error.
+                if e.response.status_code == 400 and "/documents/search" in url:
+                    print(f"API returned 400 on search for {url}. Treating as no results found.")
+                    return {"result": [], "metadata": {}} # Return a valid, empty object
+                
+                # For other HTTP errors (like 401 Unauthorized, 500 Server Error), we should fail.
+                print(f"An unrecoverable HTTP error occurred: {e}")
+                return None # Return None to indicate failure
 
             except requests.exceptions.ReadTimeout as e:
                 print(f"Read timeout. Retrying... (Attempt {attempt + 1}/{max_retries})")
-                time.sleep(3 * (attempt + 1)) # Wait and try again
+                time.sleep(3 * (attempt + 1))
             except requests.exceptions.RequestException as e:
                 print(f"A network error occurred: {e}. Retrying... (Attempt {attempt + 1}/{max_retries})")
                 time.sleep(3 * (attempt + 1))
         
         print(f"Request failed after {max_retries} attempts.")
-        return None # Return None if all retries fail
+        return None
 
     def search_documents(self, start_date, end_date, page_size=100, continuation_token=None, direction=None):
         """Searches for documents, now with support for a 'direction' filter."""
