@@ -27,6 +27,38 @@ class LiveSyncWorker(Thread):
                 return
 
             self.progress_queue.put(("LIVE_UPDATE", (client_name, "Processing...")))
+
+            # --- NEW: Logic to process skipped days first ---
+            skipped_days_to_process = client_config.get('skipped_days', [])
+            successfully_processed_skipped_days = set()
+            
+            if skipped_days_to_process:
+                self.progress_queue.put(("LOG", f"  -> Found {len(skipped_days_to_process)} skipped days for {client_name}. Retrying them first..."))
+                for day_str in skipped_days_to_process:
+                    if not self._is_running: break
+                    self.progress_queue.put(("LOG", f"    -> Retrying skipped day: {day_str}"))
+                    
+                    day_to_process = datetime.datetime.strptime(day_str, '%Y-%m-%d').date()
+                    day_start = cairo_tz.localize(datetime.datetime.combine(day_to_process, datetime.time.min))
+                    day_end = cairo_tz.localize(datetime.datetime.combine(day_to_process, datetime.time.max))
+                    
+                    day_failed = False
+                    for direction, prefix in [("Received", ""), ("Sent", "sent_")]:
+                        # This is a simplified fetch loop just for this day
+                        # We just need to know if the API call succeeds or fails
+                        search_result = api_client.search_documents(day_start, day_end, direction=direction)
+                        if search_result is None:
+                            day_failed = True
+                            self.progress_queue.put(("LOG", f"      -> FAILED to fetch {direction} data for skipped day {day_str}. Will retry next time."))
+                            break # Stop processing this day if a direction fails
+                    
+                    if not day_failed:
+                        self.progress_queue.put(("LOG", f"      -> SUCCESS on skipped day {day_str}. It will be removed from the retry list."))
+                        successfully_processed_skipped_days.add(day_str)
+
+            # Update the main skipped days list before continuing
+            final_skipped_days_list = sorted(list(set(skipped_days_to_process) - successfully_processed_skipped_days))
+
             self.progress_queue.put(("LOG", f"--- Syncing client: {client_name} ---"))
 
             db_params = {
@@ -137,6 +169,15 @@ class LiveSyncWorker(Thread):
                     self.progress_queue.put(("LIVE_UPDATE", (client_name, "Up to date")))
                 
                 self.progress_queue.put(("LOG", f"Finished syncing {client_name}. Found {total_new_docs} new documents."))
+
+            # --- NEW: Save the updated skipped days list ---
+            client_config['skipped_days'] = final_skipped_days_list
+            config_manager.save_client_config(
+                client_name, client_config.get('client_id'), client_config.get('client_secret'),
+                client_config.get('db_host'), client_config.get('db_port'), client_config.get('db_name'),
+                client_config.get('db_user'), client_config.get('db_pass'), client_config.get('date_span'),
+                client_config.get('oldest_invoice_date'), client_config.get('skipped_days')
+            )
             
             db_manager.disconnect()
 

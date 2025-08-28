@@ -355,6 +355,31 @@ class App(ctk.CTk):
                     self.live_sync_cancel_button.configure(state="disabled")
                     self.live_sync_refresh_button.configure(state="normal") # Also re-enable refresh
                     
+            elif message_type == "HISTORICAL_SYNC_COMPLETE":
+                skipped_days = data
+                self.log_message(f"Sync Finished! Found {len(skipped_days)} skipped days to retry later.")
+                
+                # Save the new list of skipped days to the config
+                client_name = self.client_name_entry.get()
+                if client_name in self.clients:
+                    client_data = self.clients[client_name]
+                    # Merge old and new skipped days, removing duplicates
+                    existing_skipped = set(client_data.get('skipped_days', []))
+                    new_skipped = set(skipped_days)
+                    final_skipped_list = sorted(list(existing_skipped | new_skipped))
+                    
+                    # Call the save function with all the required data
+                    config_manager.save_client_config(
+                        client_name, client_data.get('client_id'), client_data.get('client_secret'),
+                        client_data.get('db_host'), client_data.get('db_port'), client_data.get('db_name'),
+                        client_data.get('db_user'), client_data.get('db_pass'), client_data.get('date_span'),
+                        client_data.get('oldest_invoice_date'), final_skipped_list
+                    )
+                    self.load_clients_from_config() # Refresh in-memory client data
+                
+                self.sync_button.configure(state="normal")
+                self.cancel_button.configure(state="disabled")
+                        
             elif message_type == "LIVE_SYNC_COMPLETE":
                 self.live_sync_start_button.configure(state="normal")
                 self.live_sync_cancel_button.configure(state="disabled")

@@ -13,6 +13,8 @@ class SyncWorker(Thread):
         self.end_date = end_date
         self.progress_queue = progress_queue
         self._is_running = True
+        self.newest_doc_in_run = {'timestamp': None, 'uuid': None, 'internal_id': None}
+        self.skipped_days_in_run = []
 
     def stop(self):
         self._is_running = False
@@ -20,12 +22,12 @@ class SyncWorker(Thread):
     def run(self):
         cairo_tz = pytz.timezone('Africa/Cairo')
         
-        current_local_date = self.start_date
+        current_local_date = self.self.end_date
         total_days = (self.end_date - self.start_date).days + 1
         processed_days = 0
 
         newest_doc_in_run = {'timestamp': None, 'uuid': None, 'internal_id': None}
-        while current_local_date <= self.end_date and self._is_running:
+        while current_local_date >= self.start_date and self._is_running:
             day_start_local = cairo_tz.localize(datetime.datetime.combine(current_local_date, datetime.time.min))
             day_end_local = cairo_tz.localize(datetime.datetime.combine(current_local_date, datetime.time.max))
 
@@ -45,6 +47,7 @@ class SyncWorker(Thread):
                         search_result = self.api_client.search_documents(day_start_local, day_end_local, continuation_token=continuation_token, direction=direction)
                         
                         if search_result is None:
+                            self.skipped_days_in_run.append(current_local_date.strftime('%Y-%m-%d'))
                             self.progress_queue.put(("LOG", f"FATAL: Could not fetch {direction} summaries for {current_local_date.strftime('%Y-%m-%d')}."))
                             break
                         
@@ -95,7 +98,7 @@ class SyncWorker(Thread):
             processed_days += 1
             progress_percent = (processed_days / total_days) if total_days > 0 else 1
             self.progress_queue.put(("PROGRESS", progress_percent))
-            current_local_date += datetime.timedelta(days=1)
+            current_local_date -= datetime.timedelta(days=1)
         
         if self._is_running and newest_doc_in_run['timestamp']:
             # Use the detailed info we tracked during the run
@@ -106,4 +109,4 @@ class SyncWorker(Thread):
                 newest_doc_in_run['internal_id']
             )
 
-        self.progress_queue.put(("LOG", "Sync Finished!"))
+        self.progress_queue.put(("HISTORICAL_SYNC_COMPLETE", self.skipped_days_in_run))
