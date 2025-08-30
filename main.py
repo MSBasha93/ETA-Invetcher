@@ -356,6 +356,13 @@ class App(ctk.CTk):
                 if client_name in self.live_sync_client_labels:
                     # This part is correct, it updates the 'status' label
                     self.live_sync_client_labels[client_name]['status'].configure(text=status_text)
+
+            elif message_type == "LIVE_STATUS_FETCHED":
+                client_name, sync_text = data
+                if client_name in self.live_sync_client_labels:
+                    # Update the main "last sync" label with the real data
+                    label_widget = self.live_sync_client_labels[client_name]['main']
+                    label_widget.configure(text=sync_text, text_color=ctk.ThemeManager.theme["CTkLabel"]["text_color"]) # Reset to default color
                 
                 # --- THIS IS THE CRASH FIX ---
                 # We need to check the 'status' label inside each dictionary value
@@ -412,7 +419,7 @@ class App(ctk.CTk):
         self.live_sync_start_button = ctk.CTkButton(header_frame, text="Start Live Sync", command=self.start_live_sync)
         self.live_sync_start_button.grid(row=0, column=0, padx=10, pady=10)
         
-        self.live_sync_refresh_button = ctk.CTkButton(header_frame, text="Refresh Status", command=self.populate_live_sync_frame)
+        self.live_sync_refresh_button = ctk.CTkButton(header_frame, text="Refresh Status", command=self._draw_initial_live_sync_ui)
         self.live_sync_refresh_button.grid(row=0, column=1, padx=(20,10), pady=10, sticky="w")
         
         self.live_sync_cancel_button = ctk.CTkButton(header_frame, text="Cancel", state="disabled", command=self.cancel_live_sync)
@@ -429,11 +436,10 @@ class App(ctk.CTk):
         # Give the main text label (1) all the extra space so it can expand
         self.client_list_frame.grid_columnconfigure(1, weight=1)
 
-    def populate_live_sync_frame(self):
+    def _draw_initial_live_sync_ui(self):
         """
-        Prepares the Live Sync UI by connecting to EACH client's database
-        to fetch their individual, accurate sync status. This version is resilient
-        to clients that have never been synced.
+        Instantly draws the Live Sync UI with placeholder text.
+        This method is fast and does not perform any database operations.
         """
         for widget in self.client_list_frame.winfo_children():
             widget.destroy()
@@ -445,15 +451,47 @@ class App(ctk.CTk):
             self.live_sync_start_button.configure(state="disabled")
             return
 
-        # --- NEW: Add a "Select All" checkbox at the top ---
-        self.select_all_var = ctk.IntVar(value=1)
-        select_all_checkbox = ctk.CTkCheckBox(self.client_list_frame, text="Select All", variable=self.select_all_var, command=self.toggle_all_clients)
-        select_all_checkbox.grid(row=0, column=0, sticky="w", padx=10, pady=(5, 10))
-
         self.live_sync_start_button.configure(state="normal")
         
+        self.select_all_var = ctk.IntVar(value=1)
+        select_all_checkbox = ctk.CTkCheckBox(self.client_list_frame, text="Select All", variable=self.select_all_var, command=self.toggle_all_clients)
+        select_all_checkbox.grid(row=0, column=0, columnspan=2, sticky="w", padx=10, pady=(5, 10))
+        
+        # Instantly create labels for all clients with "Loading..." text
         for i, (name, config) in enumerate(self.clients.items(), start=1):
-            sync_text = "Never Synced"
+            checkbox_var = ctk.IntVar(value=1)
+            checkbox = ctk.CTkCheckBox(self.client_list_frame, text="", variable=checkbox_var)
+            checkbox.grid(row=i, column=0, sticky="w", padx=(10,0))
+            self.live_sync_client_checkboxes[name] = checkbox_var
+
+            name_label = ctk.CTkLabel(self.client_list_frame, text=name, font=ctk.CTkFont(weight="bold"), anchor="w")
+            name_label.grid(row=i, column=1, sticky="ew", padx=(5, 10))
+            
+            # Use "Loading..." as the placeholder
+            last_sync_label = ctk.CTkLabel(self.client_list_frame, text="Loading status...", anchor="w", text_color="gray")
+            last_sync_label.grid(row=i, column=2, sticky="ew", padx=10)
+            
+            status_label = ctk.CTkLabel(self.client_list_frame, text="Idle", text_color="gray", anchor="e")
+            status_label.grid(row=i, column=3, sticky="ew", padx=10)
+            
+            self.live_sync_client_labels[name] = {'main': last_sync_label, 'status': status_label}
+    
+    def start_populating_live_sync_frame(self):
+        """Launches the background process to fetch client statuses."""
+        # First, draw the UI instantly with placeholders
+        self._draw_initial_live_sync_ui()
+        # Then, start the background thread to do the slow work
+        threading.Thread(target=self._populate_live_sync_worker, daemon=True).start()
+
+    def _populate_live_sync_worker(self):
+        """
+        Worker thread that connects to EACH client's database one by one
+        and sends updates back to the UI queue.
+        """
+        if not self.clients: return
+
+        for name, config in self.clients.items():
+            sync_text = "Never Synced" # Default text
             db_params = { 'host': config.get('db_host'), 'dbname': config.get('db_name'), 'user': config.get('db_user'), 'password': config.get('db_pass'), 'port': int(config.get('db_port', 5432)) }
             client_api_id = config.get('client_id')
             temp_db_manager = DatabaseManager(db_params)
@@ -464,32 +502,17 @@ class App(ctk.CTk):
                 last_sync_info = statuses.get(client_api_id)
                 if last_sync_info:
                     ts, uuid, internal_id = last_sync_info
-                    doc_identifier = (uuid[:8] if uuid else None)
+                    doc_identifier = internal_id or (uuid[:8] if uuid else None)
                     if doc_identifier:
                         sync_text = f"Up to doc '{doc_identifier}' on {ts.strftime('%Y-%m-%d')}"
                     else:
                         sync_text = f"Synced up to {ts.strftime('%Y-%m-%d %H:%M')}"
             else:
                 sync_text = "DB Conn Fail"
+            
+            # Send the result for this specific client back to the main thread
+            self.ui_queue.put(("LIVE_STATUS_FETCHED", (name, sync_text)))
 
-            # Now create the UI labels with the guaranteed-to-exist sync_text
-            # --- NEW: Add an individual checkbox for each client ---
-            checkbox_var = ctk.IntVar(value=1)
-            checkbox = ctk.CTkCheckBox(self.client_list_frame, text="", variable=checkbox_var)
-            checkbox.grid(row=i, column=0, sticky="w", padx=(10,0))
-            self.live_sync_client_checkboxes[name] = checkbox_var
-
-            name_label = ctk.CTkLabel(self.client_list_frame, text=name, font=ctk.CTkFont(weight="bold"), anchor="w")
-            name_label.grid(row=i, column=1, sticky="ew", padx=(5, 10))
-            
-            last_sync_label = ctk.CTkLabel(self.client_list_frame, text=sync_text, anchor="w")
-            last_sync_label.grid(row=i, column=2, sticky="ew", padx=10)
-            
-            status_label = ctk.CTkLabel(self.client_list_frame, text="Idle", text_color="gray", anchor="e")
-            status_label.grid(row=i, column=3, sticky="ew", padx=10)
-            
-            self.live_sync_client_labels[name] = {'main': last_sync_label, 'status': status_label}
-    
     def toggle_all_clients(self):
         """Checks or unchecks all client checkboxes based on the 'Select All' state."""
         new_state = self.select_all_var.get()
@@ -507,7 +530,7 @@ class App(ctk.CTk):
         # Now, show the requested frame in its correct grid position
         if frame_to_show == self.live_sync_frame:
             # The Live Sync page takes up the full area below the client selector
-            self.populate_live_sync_frame()
+            self.start_populating_live_sync_frame()
             self.live_sync_frame.grid(row=1, column=0, rowspan=2, sticky="nsew", padx=10, pady=0)
         
         elif frame_to_show == self.main_frame:
@@ -518,9 +541,6 @@ class App(ctk.CTk):
             # These are the first and second steps in the setup workflow
             frame_to_show.grid(row=1, column=0, sticky="ew", padx=10, pady=0)
 
-        if frame_to_show == self.live_sync_frame:
-            self.populate_live_sync_frame()
-            self.live_sync_frame.grid(row=1, column=0, rowspan=2, sticky="nsew", padx=10, pady=0)
 
     def load_clients_from_config(self):
         self.clients = config_manager.load_all_clients()
