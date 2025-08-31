@@ -98,15 +98,128 @@ class DatabaseManager:
             );
             """
         )
+        view_commands = (
+            """
+            CREATE OR REPLACE VIEW vw_accounts_payable_line_items AS
+            SELECT 
+                line.id AS line_item_pk, -- Use the serial primary key for a unique ID
+                line.document_uuid,
+                hdr.internal_id AS document_internal_id,
+                hdr.uuid AS header_uuid,
+                hdr.date_time_issued::date AS issue_date,
+                hdr.issuer_name AS supplier_name,
+                hdr.document_type,
+                hdr.type_name,
+                hdr.status,
+                line.item_primary_name AS item_name,
+                line.description AS item_description,
+                line.item_code,
+                line.quantity,
+                line.unit_value_amount_egp AS unit_price_egp,
+                line.sales_total AS gross_amount_egp,
+                line.items_discount AS discount_amount_egp,
+                line.net_total AS net_amount_egp,
+                (line.total - line.net_total) AS tax_amount_egp,
+                line.total AS total_amount_egp,
+                line.unit_value_currency_sold AS original_currency,
+                line.total_foreign AS total_amount_foreign
+            FROM 
+                documents hdr
+            JOIN 
+                document_lines line ON hdr.uuid = line.document_uuid;
+            """,
+            """
+            CREATE OR REPLACE VIEW vw_accounts_receivable_line_items AS
+            SELECT 
+                line.id AS line_item_pk, -- Use the serial primary key for a unique ID
+                line.document_uuid,
+                hdr.internal_id AS document_internal_id,
+                hdr.uuid AS header_uuid,
+                hdr.date_time_issued::date AS issue_date,
+                hdr.receiver_name AS customer_name,
+                hdr.document_type,
+                hdr.type_name,
+                hdr.status,
+                line.item_primary_name AS item_name,
+                line.description AS item_description,
+                line.item_code,
+                line.quantity,
+                line.unit_value_amount_egp AS unit_price_egp,
+                line.sales_total AS gross_amount_egp,
+                line.items_discount AS discount_amount_egp,
+                line.net_total AS net_amount_egp,
+                (line.total - line.net_total) AS tax_amount_egp,
+                line.total AS total_amount_egp,
+                line.unit_value_currency_sold AS original_currency,
+                line.total_foreign AS total_amount_foreign
+            FROM 
+                sent_documents hdr
+            JOIN 
+                sent_document_lines line ON hdr.uuid = line.document_uuid;
+            """,
+            """
+            CREATE OR REPLACE VIEW vw_unified_financial_ledger AS
+            WITH all_transactions AS (
+                SELECT 
+                    'Expense' AS transaction_type,
+                    line_item_pk, document_uuid, document_internal_id, document_type,
+                    issue_date, supplier_name AS partner_name, item_name, item_description,
+                    quantity, unit_price_egp, gross_amount_egp, discount_amount_egp,
+                    net_amount_egp, tax_amount_egp, total_amount_egp,
+                    original_currency, total_amount_foreign
+                FROM 
+                    vw_accounts_payable_line_items
+                UNION ALL
+                SELECT 
+                    'Revenue' AS transaction_type,
+                    line_item_pk, document_uuid, document_internal_id, document_type,
+                    issue_date, customer_name AS partner_name, item_name, item_description,
+                    quantity, unit_price_egp, gross_amount_egp, discount_amount_egp,
+                    net_amount_egp, tax_amount_egp, total_amount_egp,
+                    original_currency, total_amount_foreign
+                FROM 
+                    vw_accounts_receivable_line_items
+            )
+            SELECT 
+                transaction_type,
+                CASE
+                    WHEN document_type = 'I' THEN 'Invoice'
+                    WHEN document_type = 'C' THEN 'Credit Note'
+                    WHEN document_type = 'D' THEN 'Debit Note'
+                    ELSE 'Other'
+                END AS document_category,
+                line_item_pk, document_uuid, document_internal_id, issue_date,
+                partner_name, item_name, item_description, quantity,
+                unit_price_egp, gross_amount_egp, discount_amount_egp,
+                net_amount_egp, tax_amount_egp, total_amount_egp,
+                original_currency, total_amount_foreign
+            FROM all_transactions t;
+            """
+        )
         try:
             with self.conn.cursor() as cur:
-                for command in commands:
-                    cur.execute(command)
-                self.conn.commit()
-            print("Schema verification complete. All tables are ready.")
+                # --- THIS IS THE CRITICAL FIX ---
+                # We combine all commands into one list to execute them sequentially.
+                all_commands = list(commands) + list(view_commands)
+                
+                for command in all_commands:
+                    try:
+                        # Each command is executed in its own transaction context within the loop
+                        print(f"Executing schema command: {command[:70]}...") # Log what we're doing
+                        cur.execute(command)
+                        print("  -> Command successful.")
+                    except psycopg2.Error as e:
+                        print(f"  -> ERROR executing command: {e}")
+                        print("     -> Skipping this command and continuing...")
+                        self.conn.rollback() # Rollback the single failed command
+                    else:
+                        self.conn.commit() # Commit the single successful command
+
+            print("Schema verification complete.")
             return True
+
         except psycopg2.Error as e:
-            print(f"Failed to create or verify tables: {e}")
+            print(f"A fatal error occurred during schema creation: {e}")
             self.conn.rollback()
             return False
 
