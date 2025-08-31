@@ -102,7 +102,7 @@ class DatabaseManager:
             """
             CREATE OR REPLACE VIEW vw_accounts_payable_line_items AS
             SELECT 
-                line.id AS line_item_pk, -- Use the serial primary key for a unique ID
+                line.custom_uuid AS line_item_uuid,
                 line.document_uuid,
                 hdr.internal_id AS document_internal_id,
                 hdr.uuid AS header_uuid,
@@ -131,7 +131,7 @@ class DatabaseManager:
             """
             CREATE OR REPLACE VIEW vw_accounts_receivable_line_items AS
             SELECT 
-                line.id AS line_item_pk, -- Use the serial primary key for a unique ID
+                line.custom_uuid AS line_item_uuid,
                 line.document_uuid,
                 hdr.internal_id AS document_internal_id,
                 hdr.uuid AS header_uuid,
@@ -161,24 +161,24 @@ class DatabaseManager:
             CREATE OR REPLACE VIEW vw_unified_financial_ledger AS
             WITH all_transactions AS (
                 SELECT 
-                    'Expense' AS transaction_type,
-                    line_item_pk, document_uuid, document_internal_id, document_type,
-                    issue_date, supplier_name AS partner_name, item_name, item_description,
-                    quantity, unit_price_egp, gross_amount_egp, discount_amount_egp,
-                    net_amount_egp, tax_amount_egp, total_amount_egp,
-                    original_currency, total_amount_foreign
-                FROM 
-                    vw_accounts_payable_line_items
-                UNION ALL
-                SELECT 
                     'Revenue' AS transaction_type,
-                    line_item_pk, document_uuid, document_internal_id, document_type,
+                    line_item_uuid, document_uuid, document_internal_id, document_type,
                     issue_date, customer_name AS partner_name, item_name, item_description,
                     quantity, unit_price_egp, gross_amount_egp, discount_amount_egp,
                     net_amount_egp, tax_amount_egp, total_amount_egp,
                     original_currency, total_amount_foreign
                 FROM 
                     vw_accounts_receivable_line_items
+                UNION ALL
+                SELECT 
+                    'Expense' AS transaction_type,
+                    line_item_uuid, document_uuid, document_internal_id, document_type,
+                    issue_date, supplier_name AS partner_name, item_name, item_description,
+                    quantity, unit_price_egp, gross_amount_egp, discount_amount_egp,
+                    net_amount_egp, tax_amount_egp, total_amount_egp,
+                    original_currency, total_amount_foreign
+                FROM 
+                    vw_accounts_payable_line_items
             )
             SELECT 
                 transaction_type,
@@ -188,7 +188,7 @@ class DatabaseManager:
                     WHEN document_type = 'D' THEN 'Debit Note'
                     ELSE 'Other'
                 END AS document_category,
-                line_item_pk, document_uuid, document_internal_id, issue_date,
+                line_item_uuid, document_uuid, document_internal_id, issue_date,
                 partner_name, item_name, item_description, quantity,
                 unit_price_egp, gross_amount_egp, discount_amount_egp,
                 net_amount_egp, tax_amount_egp, total_amount_egp,
