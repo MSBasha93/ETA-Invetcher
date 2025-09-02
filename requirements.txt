@@ -4,3 +4,4 @@ psycopg2-binary
 tkcalendar
 python-dateutil
 pytz
+schedule

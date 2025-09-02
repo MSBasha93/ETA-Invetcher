@@ -5,7 +5,9 @@ import customtkinter as ctk
 from tkcalendar import DateEntry
 import datetime
 import queue
+import schedule
 import threading
+import time
 import csv
 import json
 from tkinter import filedialog, messagebox
@@ -34,6 +36,9 @@ class App(ctk.CTk):
         self.live_sync_worker_thread = None
         self.live_sync_client_labels = {} # To hold labels for live updates
         self.live_sync_client_checkboxes = {}
+        self.automation_thread = None
+        self.is_automation_running = False
+        self.stop_automation_event = threading.Event()
         self.discovered_oldest_date = None
         self.current_logfile = None
         os.makedirs("logs", exist_ok=True) # Creates the 'logs' directory if it doesn't exist
@@ -399,6 +404,19 @@ class App(ctk.CTk):
                 messagebox.showinfo("Historical Sync", final_message)
                 self.current_logfile = None # --- NEW: Close the log file ---
 
+            elif message_type == "TRIGGER_LIVE_SYNC":
+                # Check if a sync is already running
+                if self.live_sync_worker_thread and self.live_sync_worker_thread.is_alive():
+                    self.log_message("Scheduled sync trigger ignored: a sync is already in progress.")
+                else:
+                    self.log_message("Starting scheduled live sync for all clients...")
+                    # In an automated run, we always want to sync all clients
+                    for checkbox_var in self.live_sync_client_checkboxes.values():
+                        checkbox_var.set(1)
+                    self.select_all_var.set(1)
+                    # Use the same start function as the manual button
+                    self.start_live_sync()
+
             elif message_type == "LIVE_SYNC_COMPLETE":
                 self.live_sync_start_button.configure(state="normal")
                 self.live_sync_cancel_button.configure(state="disabled")
@@ -428,8 +446,19 @@ class App(ctk.CTk):
         self.back_to_setup_button = ctk.CTkButton(header_frame, text="< Back to Setup", command=lambda: self.show_frame(self.eta_frame))
         self.back_to_setup_button.grid(row=0, column=3, padx=10, pady=10)
 
+        # --- Automation Controls ---
+        auto_frame = ctk.CTkFrame(self.live_sync_frame, fg_color="transparent")
+        auto_frame.grid(row=1, column=0, sticky="ew", padx=15, pady=(5,10))
+        ctk.CTkLabel(auto_frame, text="Automated Daily Sync Time (24h format):").pack(side="left")
+        self.automation_time_entry = ctk.CTkEntry(auto_frame, width=80)
+        self.automation_time_entry.insert(0, "08:00")
+        self.automation_time_entry.pack(side="left", padx=10)
+        self.automation_button = ctk.CTkButton(auto_frame, text="Start Daily Automation", command=self.toggle_automation)
+        self.automation_button.pack(side="left")
+
+        # --- Client List ---
         self.client_list_frame = ctk.CTkScrollableFrame(self.live_sync_frame, label_text="Client Sync Status")
-        self.client_list_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=10)
+        self.client_list_frame.grid(row=2, column=0, sticky="nsew", padx=10, pady=10)
         self.live_sync_frame.grid_rowconfigure(1, weight=1)
         # Give the checkbox (0) and status (2) columns a fixed weight
         self.client_list_frame.grid_columnconfigure((0, 2), weight=0)
@@ -653,6 +682,50 @@ class App(ctk.CTk):
             self.log_message("--- Live Sync cancellation requested ---")
             self.live_sync_cancel_button.configure(state="disabled")
             self.current_logfile = None # --- NEW: Close the log file on cancellation ---
+
+    def toggle_automation(self):
+        """Starts or stops the daily automation scheduler."""
+        if self.is_automation_running:
+            # --- STOPPING ---
+            self.stop_automation_event.set() # Signal the thread to stop
+            self.automation_button.configure(text="Start Daily Automation")
+            self.automation_time_entry.configure(state="normal")
+            self.is_automation_running = False
+            self.log_message("Daily automation stopped by user.")
+        else:
+            # --- STARTING ---
+            time_str = self.automation_time_entry.get()
+            try:
+                # Basic validation for HH:MM format
+                datetime.datetime.strptime(time_str, "%H:%M")
+            except ValueError:
+                messagebox.showerror("Invalid Time", "Please enter the time in HH:MM (24-hour) format.")
+                return
+            
+            self.stop_automation_event.clear()
+            self.automation_button.configure(text="Stop Daily Automation")
+            self.automation_time_entry.configure(state="disabled")
+            self.is_automation_running = True
+            self.log_message(f"Daily automation started. Sync will run for all clients at {time_str} each day.")
+            self.automation_thread = threading.Thread(target=self._automation_worker, args=(time_str,), daemon=True)
+            self.automation_thread.start()
+
+    def _automation_worker(self, time_str):
+        """The background thread that runs the scheduler."""
+        schedule.every().day.at(time_str).do(self.trigger_live_sync_from_automation)
+        self.log_message(f"Scheduler armed. Next run at {time_str} tomorrow.")
+        
+        while not self.stop_automation_event.is_set():
+            schedule.run_pending()
+            time.sleep(1) # Check every second
+        
+        schedule.clear()
+        self.log_message("Scheduler has been cleared.")
+
+    def trigger_live_sync_from_automation(self):
+        """This is the job the scheduler runs. It safely asks the main thread to start the sync."""
+        self.log_message(f"Scheduled time reached! Triggering live sync...")
+        self.ui_queue.put(("TRIGGER_LIVE_SYNC", None))
 
     def run_db_create(self):
         """Starts the database creation worker thread."""
