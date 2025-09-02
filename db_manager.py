@@ -256,8 +256,21 @@ class DatabaseManager:
         except psycopg2.Error as e:
             print(f"Failed to update sync status: {e}")
             self.conn.rollback()
-            
-    # --- document_exists and insert_document methods from the previous version remain the same ---
+
+    def update_document_status(self, uuid, new_status, reason, table_prefix=""):
+        """Updates the status and reason for a single document."""
+        table_name = f"{table_prefix}documents"
+        sql = f"UPDATE {table_name} SET status = %s, document_status_reason = %s WHERE uuid = %s;"
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(sql, (new_status, reason, uuid))
+            self.conn.commit()
+            return True
+        except psycopg2.Error as e:
+            print(f"Failed to update status for doc {uuid}: {e}")
+            self.conn.rollback()
+            return False
+
     def document_exists(self, uuid, table_prefix=""):
         self._ensure_connection()
         table_name = f"{table_prefix}documents"; query = f"SELECT 1 FROM {table_name} WHERE uuid = %s"
@@ -352,6 +365,31 @@ class DatabaseManager:
             print(f"Failed to get latest invoice timestamp: {e}")
             self.conn.rollback()
             return None
+
+    def get_influx_document_uuids(self):
+        """
+        Fetches the UUIDs of all 'Valid' documents whose cancellation/rejection
+        period has not yet passed. These are the only documents that need re-checking.
+        """
+        uuids = []
+        # We check both tables. The NOW() function is timezone-aware in PostgreSQL.
+        queries = [
+            "SELECT uuid FROM documents WHERE status = 'Valid' AND canbe_cancelled_until > NOW()",
+            "SELECT uuid FROM sent_documents WHERE status = 'Valid' AND canbe_cancelled_until > NOW()"
+        ]
+        try:
+            with self.conn.cursor() as cur:
+                for query in queries:
+                    cur.execute(query)
+                    # fetchall() returns a list of tuples, e.g., [('uuid1',), ('uuid2',)]
+                    results = cur.fetchall()
+                    for row in results:
+                        uuids.append(row[0])
+            return uuids
+        except psycopg2.Error as e:
+            print(f"Failed to get in-flux document UUIDs: {e}")
+            self.conn.rollback()
+            return []
 
     def create_database(self, new_db_name):
         """

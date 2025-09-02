@@ -17,7 +17,7 @@ class SingleClientSyncWorker(Thread):
         self._is_running = False
 
     def run(self):
-        """The main sync logic for ONE client."""
+        """The main sync logic for ONE client, now with a two-phase process."""
         client_name = self.client_name
         client_config = self.client_config
         cairo_tz = pytz.timezone('Africa/Cairo')
@@ -33,6 +33,37 @@ class SingleClientSyncWorker(Thread):
             self.progress_queue.put(("LIVE_UPDATE", (client_name, "DB Conn Fail")))
             return
 
+        # --- PHASE 1: Re-check status of in-flux documents ---
+        self.progress_queue.put(("LOG", f"  -> Phase 1 ({client_name}): Checking for status updates on recent documents..."))
+        docs_to_recheck = db_manager.get_influx_document_uuids()
+        updated_count = 0
+        if docs_to_recheck:
+            self.progress_queue.put(("LOG", f"    -> ({client_name}) Found {len(docs_to_recheck)} documents to re-validate."))
+            for uuid in docs_to_recheck:
+                if not self._is_running: break
+                details = api_client.get_document_details(uuid)
+                if details and details.get('status') != 'Valid':
+                    # Determine table prefix based on the document's issuer/receiver ID
+                    is_sent = details.get('issuer', {}).get('id') == api_client.client_id
+                    table_prefix = "sent_" if is_sent else ""
+                    
+                    new_status = details.get('status')
+                    reason = details.get('documentStatusReason', '')
+                    db_manager.update_document_status(uuid, new_status, reason, table_prefix)
+                    updated_count += 1
+                    self.progress_queue.put(("LOG", f"      -> STATUS UPDATE ({client_name}): Doc {uuid[:8]} changed to '{new_status}'."))
+        
+        if updated_count > 0:
+            self.progress_queue.put(("LOG", f"  -> Phase 1 Complete ({client_name}): Updated {updated_count} document statuses."))
+        else:
+            self.progress_queue.put(("LOG", f"  -> Phase 1 Complete ({client_name}): All recent document statuses are up-to-date."))
+        
+        if not self._is_running: # Allow cancellation after Phase 1
+             db_manager.disconnect()
+             return
+
+        # --- PHASE 2: Discover new documents ---
+        self.progress_queue.put(("LOG", f"  -> Phase 2 ({client_name}): Discovering new documents..."))
         start_date = db_manager.get_latest_invoice_timestamp()
         if start_date:
             start_date = start_date.astimezone(cairo_tz)
