@@ -607,25 +607,24 @@ class App(ctk.CTk):
             self.show_frame(self.eta_frame)
 
     def start_sync(self):
-        self.progressbar.set(0); self.log_message("--- Starting Sync ---")
-        self.sync_button.configure(state="disabled"); self.cancel_button.configure(state="normal")
-        start_date, end_date = self.start_date_entry.get_date(), self.end_date_entry.get_date()
-        self.sync_worker_thread = SyncWorker(self.api_client.client_id, self.api_client, self.db_manager, start_date, end_date, self.ui_queue)
-        self.sync_worker_thread.start()
-        
+        self.progressbar.set(0); 
         # --- NEW: Create and set the log file for this session (Robust version) ---
-        # 1. Try the text entry box first, as it might have been edited.
         client_name = self.client_name_entry.get()
-        # 2. If it's empty, fall back to the dropdown's selected value.
-        if not client_name:
-            client_name = self.selected_client_name.get()
-        # 3. As a final failsafe, if it's still invalid, use a default.
-        if not client_name or client_name == "No clients configured":
-            client_name = "Untitled_Client"
+        if not client_name: client_name = self.selected_client_name.get()
+        if not client_name or client_name == "No clients configured": client_name = "Untitled_Client"
         
         client_name_safe = client_name.replace(" ", "_").replace("/", "-")
         timestamp = datetime.datetime.now().strftime('%Y-%m-%d_%H%M%S')
         self.current_logfile = f"logs/Historical_{client_name_safe}_{timestamp}.txt"
+        
+        self.log_message("--- Starting Sync ---")
+        self.sync_button.configure(state="disabled"); self.cancel_button.configure(state="normal")
+        start_date, end_date = self.start_date_entry.get_date(), self.end_date_entry.get_date()
+        self.sync_worker_thread = SyncWorker(self.api_client.client_id, self.api_client, self.db_manager, start_date, end_date, self.ui_queue)
+        self.sync_worker_thread.start()
+
+        
+        
     def cancel_sync(self):
         if self.sync_worker_thread and self.sync_worker_thread.is_alive():
             self.sync_worker_thread.stop(); self.log_message("--- Cancellation requested ---"); self.cancel_button.configure(state="disabled")
