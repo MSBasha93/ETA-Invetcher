@@ -15,6 +15,7 @@ class SyncWorker(Thread):
         self._is_running = True
         self.newest_doc_in_run = {'timestamp': None, 'uuid': None, 'internal_id': None}
         self.skipped_days_in_run = []
+        self.failed_uuids_in_run = set()
 
     def stop(self):
         self._is_running = False
@@ -45,6 +46,7 @@ class SyncWorker(Thread):
                         search_result = self.api_client.search_documents(day_start_local, day_end_local, continuation_token=continuation_token, direction=direction)
                         
                         if search_result is None:
+                            self.skipped_days_in_run.append(current_local_date.strftime('%Y-%m-%d'))
                             self.progress_queue.put(("LOG", f"  -> API call failed for '{direction}' documents, will retry day later."))
                             day_had_api_failure = True
                             break
@@ -100,7 +102,8 @@ class SyncWorker(Thread):
                             else:
                                 self.progress_queue.put(("LOG", f"DB_FAIL on doc {uuid[:8]}: {message}"))
                         else:
-                            self.progress_queue.put(("LOG", f"API_FAIL: Could not get details for {uuid} after retries."))
+                            self.progress_queue.put(("LOG", f"API_FAIL: Could not get details for {uuid}. Adding to retry queue for next Live Sync."))
+                            self.failed_uuids_in_run.add(uuid)
                 
                 except Exception as e:
                     self.progress_queue.put(("LOG", f"CRITICAL ERROR on {current_local_date.strftime('%Y-%m-%d')} for {direction} docs: {e}"))
@@ -121,4 +124,4 @@ class SyncWorker(Thread):
                 self.newest_doc_in_run['internal_id']
             )
         
-        self.progress_queue.put(("HISTORICAL_SYNC_COMPLETE", self.skipped_days_in_run))
+        self.progress_queue.put(("HISTORICAL_SYNC_COMPLETE", (self.skipped_days_in_run, list(self.failed_uuids_in_run))))

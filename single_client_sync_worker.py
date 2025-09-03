@@ -33,6 +33,29 @@ class SingleClientSyncWorker(Thread):
             self.progress_queue.put(("LIVE_UPDATE", (client_name, "DB Conn Fail")))
             return
 
+        # --- NEW: PHASE 0 - Process Failed UUID Retry Queue ---
+        self.progress_queue.put(("LOG", f"  -> Phase 0 ({client_name}): Checking for documents in retry queue..."))
+        uuids_to_retry = client_config.get('failed_uuids', [])
+        successfully_processed_retries = set()
+        
+        if uuids_to_retry:
+            self.progress_queue.put(("LOG", f"    -> Found {len(uuids_to_retry)} documents to retry for {client_name}."))
+            for uuid in uuids_to_retry:
+                if not self._is_running: break
+                details = api_client.get_document_details(uuid)
+                if details:
+                    is_sent = details.get('issuer', {}).get('id') == api_client.client_id
+                    table_prefix = "sent_" if is_sent else ""
+                    if not db_manager.document_exists(uuid, table_prefix):
+                        db_manager.insert_document(details, table_prefix)
+                    successfully_processed_retries.add(uuid)
+                    self.progress_queue.put(("LOG", f"      -> SUCCESS on retried doc {uuid[:8]}."))
+                else:
+                    newly_failed_uuids_this_run.add(uuid)
+                    self.progress_queue.put(("LOG", f"      -> FAILED again on retried doc {uuid[:8]}. Keeping in queue."))
+        else:
+            self.progress_queue.put(("LOG", f"    -> Retry queue is empty."))
+
         # --- PHASE 1: Re-check status of in-flux documents ---
         self.progress_queue.put(("LOG", f"  -> Phase 1 ({client_name}): Checking for status updates on recent documents..."))
         docs_to_recheck = db_manager.get_influx_document_uuids()
@@ -75,7 +98,7 @@ class SingleClientSyncWorker(Thread):
         total_new_docs = 0
         newest_doc_in_run = {'timestamp': None, 'uuid': None, 'internal_id': None}
         current_local_date = start_date.date()
-
+        newly_failed_uuids_this_run = set()
         # --- THIS IS THE FULL, CORRECT DAY-BY-DAY LOOP THAT WAS MISSING ---
         while current_local_date <= now_in_cairo.date() and self._is_running:
             self.progress_queue.put(("LOG", f"  -> Processing Day: {current_local_date.strftime('%Y-%m-%d')} for {client_name}"))
@@ -127,12 +150,27 @@ class SingleClientSyncWorker(Thread):
             current_local_date += datetime.timedelta(days=1)
 
         if self._is_running:
+            # First, update the sync status with the newest document found, if any.
             if total_new_docs > 0 and newest_doc_in_run['timestamp']:
-                db_manager.update_sync_status(client_config['client_id'], newest_doc_in_run['timestamp'], newest_doc_in_run['uuid'], newest_doc_in_run['internal_id'])
+                db_manager.update_sync_status(
+                    client_config['client_id'], 
+                    newest_doc_in_run['timestamp'], 
+                    newest_doc_in_run['uuid'], 
+                    newest_doc_in_run['internal_id']
+                )
                 display_time = newest_doc_in_run['timestamp'].astimezone(cairo_tz).strftime('%Y-%m-%d %H:%M (EET)')
                 self.progress_queue.put(("LIVE_UPDATE", (client_name, f"Done ({display_time})")))
             else:
                 self.progress_queue.put(("LIVE_UPDATE", (client_name, "Up to date")))
-            self.progress_queue.put(("LOG", f"--- Finished sync thread for {client_name}. Found {total_new_docs} new documents. ---"))
+
+            # --- NEW: Now, save the updated failed UUIDs list ---
+            final_failed_uuids_list = sorted(list((set(uuids_to_retry) - successfully_processed_retries) | newly_failed_uuids_this_run))
+            config_manager.save_client_config(
+                client_name, client_config.get('client_id'), client_config.get('client_secret'),
+                client_config.get('db_host'), client_config.get('db_port'), client_config.get('db_name'),
+                client_config.get('db_user'), client_config.get('db_pass'), client_config.get('date_span'),
+                client_config.get('oldest_invoice_date'), client_config.get('skipped_days'), final_failed_uuids_list
+            )
+            self.progress_queue.put(("LOG", f"--- Finished sync thread for {client_name}. Found {total_new_docs} new documents. {len(final_failed_uuids_list)} documents remain in retry queue. ---"))
         
         db_manager.disconnect()
