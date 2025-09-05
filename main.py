@@ -338,14 +338,25 @@ class App(ctk.CTk):
                 if success:
                     self.db_status_label.configure(text="Success! Database is ready. Saving configuration...", text_color="green")
                     # Save all credentials
+                     # 1. Prioritize the name from the text entry box.
                     client_name = self.client_name_entry.get()
-                    if not client_name: client_name = f"Client-{self.client_id_entry.get()[:6]}"
+                    # 2. If it's empty, fall back to the dropdown's selected value.
+                    if not client_name:
+                        client_name = self.selected_client_name.get()
+                    # 3. As a final failsafe, create a default name.
+                    if not client_name or client_name == "No clients configured":
+                        client_name = f"Client-{self.client_id_entry.get()[:6]}"
                     date_span = (self.start_date_entry.get_date().strftime('%Y-%m-%d'), self.end_date_entry.get_date().strftime('%Y-%m-%d'))
                     config_manager.save_client_config(client_name, self.client_id_entry.get(), self.client_secret_entry.get(),
                                                       self.db_host_entry.get(), 5432, self.db_name_entry.get(), self.db_user_entry.get(),
                                                       self.db_pass_entry.get(), date_span, self.discovered_oldest_date)
+                     # First, save the last selected client name to the config
+                    config_manager.save_last_selected_client(client_name)
+                    # Then, reload all clients. This will now pick up the new client
+                    # AND the fact that it was the last one selected.
                     self.load_clients_from_config()
-                    self.selected_client_name.set(client_name)
+                    
+                    # Finally, move to the next screen
                     self.show_frame(self.main_frame)
                 else:
                     self.db_status_label.configure(text="Error: Failed to create database tables. Check permissions.", text_color="red")
@@ -572,16 +583,27 @@ class App(ctk.CTk):
 
 
     def load_clients_from_config(self):
+        """Loads all clients and sets the UI to the last selected one."""
         self.clients = config_manager.load_all_clients()
-        client_names = list(self.clients.keys()) if self.clients else ["No clients configured"]
-        self.client_selector.configure(values=client_names)
+        client_names = list(self.clients.keys())
+        
+        # Determine the initial selected client
         last_client = config_manager.load_last_selected_client()
         if last_client and last_client in self.clients:
-            self.selected_client_name.set(last_client); self.on_client_selected(last_client)
-        elif client_names[0] != "No clients configured":
-             self.selected_client_name.set(client_names[0]); self.on_client_selected(client_names[0])
+            selected = last_client
+        elif client_names:
+            selected = client_names[0]
         else:
-             self.selected_client_name.set(client_names[0])
+            selected = "No clients configured"
+
+        # Update the dropdown menu's options and set its variable
+        self.client_selector.configure(values=client_names if client_names else ["No clients configured"])
+        self.selected_client_name.set(selected)
+        
+        # CRITICAL FIX: After setting the variable, explicitly call the handler
+        # to ensure all UI fields (including the master entry box) are updated.
+        if selected in self.clients:
+            self.on_client_selected(selected)
     
     def on_client_selected(self, selected_name):
         """Called when a client is chosen. Populates fields and resets the view."""
@@ -589,6 +611,7 @@ class App(ctk.CTk):
             client_data = self.clients[selected_name]
             self.client_name_entry.delete(0, "end")
             self.client_name_entry.insert(0, selected_name)
+            self.selected_client_name.set(selected_name)
             # Populate all fields from saved config
             self.client_id_entry.delete(0, "end"); self.client_id_entry.insert(0, client_data.get('client_id', ''))
             self.client_secret_entry.delete(0, "end"); self.client_secret_entry.insert(0, client_data.get('client_secret', ''))
