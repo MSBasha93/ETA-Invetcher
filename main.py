@@ -113,9 +113,9 @@ class App(ctk.CTk):
                 # Define all possible fields, including the new ones
                 fieldnames = [
                     'client_name', 'client_id', 'client_secret', 'db_host', 'db_port', 
-                    'db_name', 'db_user', 'db_pass', 'oldest_invoice_date', 'date_span','skipped_days'
+                    'db_name', 'db_user', 'db_pass', 'oldest_invoice_date', 'date_span'
                 ]
-                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames, extrasaction='ignore')
                 writer.writeheader()
                 for name, data in clients.items():
                     row = {'client_name': name}
