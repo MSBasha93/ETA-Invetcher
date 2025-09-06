@@ -275,77 +275,92 @@ class DatabaseManager:
         self._ensure_connection()
         table_name = f"{table_prefix}documents"; query = f"SELECT 1 FROM {table_name} WHERE uuid = %s"
         with self.conn.cursor() as cur: cur.execute(query, (uuid,)); return cur.fetchone() is not None
-    
-# In db_manager.py
 
-    def insert_document(self, doc_data, table_prefix=""):
+    def filter_existing_uuids(self, uuids_to_check, table_prefix=""):
         """
-        Inserts a single document, correctly parsing ALL known JSON structures by
-        first identifying the correct source object for the main invoice data.
+        Takes a list of UUIDs and returns a new list containing only the UUIDs
+        that do NOT already exist in the database.
+        """
+        if not uuids_to_check:
+            return []
+        
+        table_name = f"{table_prefix}documents"
+        # The '= ANY(%s)' syntax is a very efficient way to check for multiple values
+        query = f"SELECT uuid FROM {table_name} WHERE uuid = ANY(%s);"
+        
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(query, (uuids_to_check,))
+                # Create a set of the UUIDs that were found in the database
+                existing_uuids = {row[0] for row in cur.fetchall()}
+            
+            # Return a new list containing only the UUIDs that were NOT in the existing set
+            new_uuids = [uuid for uuid in uuids_to_check if uuid not in existing_uuids]
+            return new_uuids
+
+        except psycopg2.Error as e:
+            print(f"Error filtering existing UUIDs: {e}")
+            self.conn.rollback()
+            # Failsafe: if the check fails, return the original list to avoid losing data
+            return uuids_to_check
+    
+
+    def insert_document(self, cursor, doc_data, table_prefix=""):
+        """
+        Inserts a single document using a provided database cursor for batching.
+        This version is designed to be called from a worker's transaction loop.
         """
         header_table = f"{table_prefix}documents"
         lines_table = f"{table_prefix}document_lines"
         
         try:
-            with self.conn.cursor() as cur:
-                # --- THIS IS THE FINAL, CORRECT LOGIC ---
-                # Determine the object that contains the core invoice data.
-                # For Sent docs, this is doc_data['document']. For Received/Cancelled, it's doc_data itself.
-                core_data_object = doc_data.get('document', doc_data)
+            # The logic for parsing is the same as the last complete version.
+            # It correctly handles all three JSON structures.
+            core_data_object = doc_data.get('document', doc_data)
 
-                # Now, extract all data, using the correct source object for each piece.
-                header_data = {
-                    # Get these from the top-level `doc_data` as they are always present
-                    "uuid": doc_data.get('uuid'),
-                    "submission_uuid": doc_data.get('submissionUUID'),
-                    "status": doc_data.get('status'),
-                    "total_amount": doc_data.get('totalAmount'),
-                    "net_amount": doc_data.get('netAmount'),
-                    "total_sales": doc_data.get('totalSales'),
-                    "total_discount": doc_data.get('totalDiscount'),
-                    "date_time_received": doc_data.get('dateTimeReceived') or doc_data.get('dateTimeRecevied'),
-                    "document_status_reason": doc_data.get('documentStatusReason'),
+            header_data = {
+                "uuid": doc_data.get('uuid'),
+                "submission_uuid": doc_data.get('submissionUUID'),
+                "status": doc_data.get('status'),
+                "total_amount": doc_data.get('totalAmount'),
+                "net_amount": doc_data.get('netAmount'),
+                "total_sales": doc_data.get('totalSales'),
+                "total_discount": doc_data.get('totalDiscount'),
+                "date_time_received": doc_data.get('dateTimeReceived') or doc_data.get('dateTimeRecevied'),
+                "document_status_reason": doc_data.get('documentStatusReason'),
+                "internal_id": core_data_object.get('internalID') or core_data_object.get('internalId'),
+                "type_name": core_data_object.get('documentType'),
+                "date_time_issued": core_data_object.get('dateTimeIssued'),
+                "issuer_id": core_data_object.get('issuer', {}).get('id'),
+                "issuer_name": core_data_object.get('issuer', {}).get('name'),
+                "receiver_id": core_data_object.get('receiver', {}).get('id'),
+                "receiver_name": core_data_object.get('receiver', {}).get('name')
+            }
+            
+            columns = ', '.join(header_data.keys())
+            placeholders = ', '.join([f'%({key})s' for key in header_data.keys()])
+            header_sql = f"INSERT INTO {header_table} ({columns}) VALUES ({placeholders});"
+            # Use the provided cursor
+            cursor.execute(header_sql, header_data)
 
-                    # Get these from the `core_data_object`
-                    "internal_id": core_data_object.get('internalID') or core_data_object.get('internalId'),
-                    "type_name": core_data_object.get('documentType'),
-                    "date_time_issued": core_data_object.get('dateTimeIssued'),
-                    "issuer_id": core_data_object.get('issuer', {}).get('id'),
-                    "issuer_name": core_data_object.get('issuer', {}).get('name'),
-                    "receiver_id": core_data_object.get('receiver', {}).get('id'),
-                    "receiver_name": core_data_object.get('receiver', {}).get('name')
+            for line in core_data_object.get('invoiceLines', []):
+                line_data = {
+                    "document_uuid": doc_data.get('uuid'), "description": line.get('description'),
+                    "item_code": line.get('itemCode'), "quantity": line.get('quantity'),
+                    "net_total": line.get('netTotal'), "total": line.get('total')
                 }
-                
-                # Build and execute the SQL for the header
-                columns = ', '.join(header_data.keys())
-                placeholders = ', '.join([f'%({key})s' for key in header_data.keys()])
-                header_sql = f"INSERT INTO {header_table} ({columns}) VALUES ({placeholders});"
-                cur.execute(header_sql, header_data)
-
-                # --- THIS IS THE CRITICAL FIX FOR INVOICE LINES ---
-                # We now correctly get the invoiceLines from the `core_data_object`.
-                for line in core_data_object.get('invoiceLines', []):
-                    line_data = {
-                        "document_uuid": doc_data.get('uuid'),
-                        "description": line.get('description'),
-                        "item_code": line.get('itemCode'),
-                        "quantity": line.get('quantity'),
-                        "net_total": line.get('netTotal'),
-                        "total": line.get('total')
-                    }
-                    line_columns = ', '.join(line_data.keys())
-                    line_placeholders = ', '.join([f'%({key})s' for key in line_data.keys()])
-                    lines_sql = f"INSERT INTO {lines_table} ({line_columns}) VALUES ({line_placeholders});"
-                    cur.execute(lines_sql, line_data)
-                
-            self.conn.commit()
-            return (True, "Success")
+                line_columns = ', '.join(line_data.keys())
+                line_placeholders = ', '.join([f'%({key})s' for key in line_data.keys()])
+                lines_sql = f"INSERT INTO {lines_table} ({line_columns}) VALUES ({line_placeholders});"
+                # Use the provided cursor
+                cursor.execute(lines_sql, line_data)
+            
+            return True # Signal success to the calling worker
 
         except (psycopg2.Error, ValueError) as e:
-            error_message = f"DB Error on doc {doc_data.get('uuid')}: {e}"
-            print(error_message)
-            self.conn.rollback()
-            return (False, str(e).strip())
+            # We don't rollback here; the worker that owns the transaction will.
+            print(f"DB Batch Error on doc {doc_data.get('uuid')}: {e}")
+            return False # Signal failure
 
     def get_latest_invoice_timestamp(self):
         self._ensure_connection()

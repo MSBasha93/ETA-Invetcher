@@ -39,6 +39,7 @@ class SyncWorker(Thread):
                 if not self._is_running: break
                 
                 try:
+                    # --- Step 1: Discover ALL document summaries for the day/direction ---
                     all_summaries = []
                     continuation_token = None
                     while True:
@@ -46,68 +47,70 @@ class SyncWorker(Thread):
                         search_result = self.api_client.search_documents(day_start_local, day_end_local, continuation_token=continuation_token, direction=direction)
                         
                         if search_result is None:
-                            self.skipped_days_in_run.append(current_local_date.strftime('%Y-%m-%d'))
-                            self.progress_queue.put(("LOG", f"  -> API call failed for '{direction}' documents, will retry day later."))
-                            day_had_api_failure = True
-                            break
-
-                        found_results = search_result.get('result') # Do not provide a default here
-                        if found_results is not None: # Explicitly check for None
-                            all_summaries.extend(found_results)
+                            day_had_api_failure = True; break
                         
+                        all_summaries.extend(search_result.get('result', []))
                         continuation_token = search_result.get('metadata', {}).get('continuationToken')
-                        if continuation_token == "EndofResultSet" or not continuation_token:
-                            break
+                        if continuation_token == "EndofResultSet" or not continuation_token: break
                     
-                    if day_had_api_failure:
-                        continue
+                    if day_had_api_failure: continue # Move to the next direction if discovery failed
 
-                    if all_summaries:
-                        self.progress_queue.put(("LOG", f"  -> Found {len(all_summaries)} '{direction}' documents. Fetching details..."))
+                    # --- Step 2: Pre-filter against the database ---
+                    all_discovered_uuids = [s['uuid'] for s in all_summaries if isinstance(s, dict) and 'uuid' in s]
+                    uuids_to_process = self.db_manager.filter_existing_uuids(all_discovered_uuids, table_prefix)
+                    
+                    if not uuids_to_process:
+                        if all_discovered_uuids: self.progress_queue.put(("LOG", f"  -> All {len(all_discovered_uuids)} discovered '{direction}' documents already exist."))
+                        continue # Nothing to do, move to the next direction
 
-                    for i, summary in enumerate(all_summaries):
-                        if not self._is_running: break
-                        
-                        # --- THIS IS THE CRITICAL FIX FOR ALL CRASHES ---
-                        # Defensively check if the summary is a valid object with a UUID
-                        if not isinstance(summary, dict) or 'uuid' not in summary:
-                            self.progress_queue.put(("LOG", f"    -> Skipped one malformed document summary from API."))
-                            continue # Safely skip this invalid entry and move to the next
-                        
-                        uuid = summary['uuid']
-                        
-                        if self.db_manager.document_exists(uuid, table_prefix):
-                            continue
-
-                        details = self.api_client.get_document_details(uuid)
-                        if details:
-                            success, message = self.db_manager.insert_document(details, table_prefix)
-                            if success:
-                                self.progress_queue.put(("LOG", f"    -> Saved doc {i+1}/{len(all_summaries)} (UUID: {uuid[:8]}...)"))
-                                doc_ts_str = details.get('dateTimeReceived') or details.get('dateTimeRecevied')
-                                if doc_ts_str:
-                                    if '.' in doc_ts_str and len(doc_ts_str.split('.')[1]) > 7:
-                                        doc_ts_str = doc_ts_str[:26] + "Z"
-                                    doc_dt = None
-                                    for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ"):
-                                        try:
-                                            doc_dt = datetime.datetime.strptime(doc_ts_str, fmt)
-                                            break
-                                        except ValueError: continue
+                    summaries_to_process = {s['uuid']: s for s in all_summaries if s['uuid'] in uuids_to_process}
+                    total_to_process = len(uuids_to_process)
+                    self.progress_queue.put(("LOG", f"  -> Discovered {len(all_discovered_uuids)} '{direction}' documents, {total_to_process} are new. Fetching and batching..."))
+                    
+                    # --- Step 3: Process the new documents in a single batch ---
+                    with self.db_manager.conn.cursor() as cur:
+                        for i, uuid in enumerate(uuids_to_process):
+                            if not self._is_running: raise InterruptedError("Sync cancelled.")
+                            
+                            details = self.api_client.get_document_details(uuid)
+                            if details:
+                                success = self.db_manager.insert_document(cur, details, table_prefix)
+                                if success:
+                                    self.progress_queue.put(("LOG", f"    -> Batched doc {i+1}/{total_to_process} (UUID: {uuid[:8]}...)"))
+                                    # (The logic to track the newest doc is the same)
+                                    doc_ts_str = details.get('dateTimeReceived') or details.get('dateTimeRecevied')
+                                    if doc_ts_str:
+                                        if '.' in doc_ts_str and len(doc_ts_str.split('.')[1]) > 7:
+                                            doc_ts_str = doc_ts_str[:26] + "Z"
+                                        doc_dt = None
+                                        for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ"):
+                                            try:
+                                                doc_dt = datetime.datetime.strptime(doc_ts_str, fmt)
+                                                break
+                                            except ValueError: continue
                                     
-                                    if doc_dt and (self.newest_doc_in_run['timestamp'] is None or doc_dt > self.newest_doc_in_run['timestamp']):
-                                        self.newest_doc_in_run['timestamp'] = doc_dt
-                                        self.newest_doc_in_run['uuid'] = details.get('uuid')
-                                        self.newest_doc_in_run['internal_id'] = details.get('internalID') or details.get('document', {}).get('internalId')
+                                        if doc_dt and (self.newest_doc_in_run['timestamp'] is None or doc_dt > self.newest_doc_in_run['timestamp']):
+                                            self.newest_doc_in_run['timestamp'] = doc_dt
+                                            self.newest_doc_in_run['uuid'] = details.get('uuid')
+                                            self.newest_doc_in_run['internal_id'] = details.get('internalID') or details.get('document', {}).get('internalId')
+                                        pass
+                                else:
+                                    self.progress_queue.put(("LOG", f"DB_FAIL on doc {uuid[:8]}: Skipping doc in batch."))
                             else:
-                                self.progress_queue.put(("LOG", f"DB_FAIL on doc {uuid[:8]}: {message}"))
-                        else:
-                            self.progress_queue.put(("LOG", f"API_FAIL: Could not get details for {uuid}. Adding to retry queue for next Live Sync."))
-                            self.failed_uuids_in_run.add(uuid)
-                
+                                self.progress_queue.put(("LOG", f"API_FAIL on doc {uuid[:8]}: Adding to retry queue."))
+                                self.failed_uuids_in_run.add(uuid)
+                    
+                    self.db_manager.conn.commit()
+                    self.progress_queue.put(("LOG", f"  -> Batch of {total_to_process} new '{direction}' documents committed."))
+
+                except InterruptedError:
+                    self.progress_queue.put(("LOG", "  -> Batch cancelled. Rolling back changes."))
+                    self.db_manager.conn.rollback()
                 except Exception as e:
                     self.progress_queue.put(("LOG", f"CRITICAL ERROR on {current_local_date.strftime('%Y-%m-%d')} for {direction} docs: {e}"))
+                    self.db_manager.conn.rollback()
                     day_had_api_failure = True
+            
             if day_had_api_failure:
                 self.skipped_days_in_run.append(current_local_date.strftime('%Y-%m-%d'))
 
