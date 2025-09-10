@@ -223,6 +223,56 @@ class DatabaseManager:
             self.conn.rollback()
             return False
 
+    def check_and_create_readonly_user(self):
+        """
+        Checks if a read-only user for the current database exists, and creates it
+        with the correct permissions if it doesn't.
+        This requires the main connection user to have CREATEROLE privileges.
+        """
+        db_name = self.db_params.get('dbname')
+        if not db_name:
+            return (False, "Database name is not configured.")
+
+        # Construct the username and password based on the database name
+        ro_username = f"{db_name}_user"
+        ro_password = f"{db_name}@FN"
+        
+        try:
+            with self.conn.cursor() as cur:
+                # Step 1: Check if the user/role already exists
+                cur.execute("SELECT 1 FROM pg_catalog.pg_user WHERE usename = %s", (ro_username,))
+                user_exists = cur.fetchone()
+
+                if not user_exists:
+                    # Step 2: Create the user only if they don't exist
+                    print(f"User '{ro_username}' does not exist. Creating...")
+                    # Use SQL parameters for the password to be safe
+                    cur.execute(f'CREATE USER "{ro_username}" WITH PASSWORD %s;', (ro_password,))
+                    print(f"  -> User '{ro_username}' created successfully.")
+                else:
+                    print(f"User '{ro_username}' already exists. Verifying permissions...")
+
+                # Step 3 & 4: Grant necessary privileges
+                cur.execute(f'GRANT CONNECT ON DATABASE "{db_name}" TO "{ro_username}";')
+                cur.execute(f'GRANT USAGE ON SCHEMA public TO "{ro_username}";')
+                cur.execute(f'GRANT SELECT ON ALL TABLES IN SCHEMA public TO "{ro_username}";')
+                # Step 5: Grant privileges for any future tables/views
+                cur.execute(f'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO "{ro_username}";')
+                
+            self.conn.commit()
+            success_msg = f"Read-only user '{ro_username}' is configured."
+            print(f"  -> {success_msg}")
+            return (True, success_msg)
+
+        except psycopg2.Error as e:
+            error_message = str(e).strip()
+            # Provide a helpful message for the most common failure
+            if "permission denied" in error_message:
+                error_message = "Permission denied. The main user needs CREATEROLE privileges to create other users."
+            print(f"  -> ERROR during user creation/verification: {error_message}")
+            self.conn.rollback()
+            return (False, error_message)
+
     def get_all_sync_statuses(self):
         """Fetches the last sync details for all clients."""
         statuses = {}

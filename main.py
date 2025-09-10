@@ -265,8 +265,15 @@ class App(ctk.CTk):
             return
         
         self.ui_queue.put(("DB_STATUS_UPDATE", "Connected. Verifying/Creating tables..."))
-        success = self.db_manager.check_and_create_tables()
-        self.ui_queue.put(("DB_SCHEMA_DONE", success))
+        tables_ok = self.db_manager.check_and_create_tables()
+        if not tables_ok:
+            self.ui_queue.put(("DB_SCHEMA_DONE", (False, "Failed to create database tables.")))
+            return
+
+        self.ui_queue.put(("DB_STATUS_UPDATE", "Tables OK. Verifying read-only user..."))
+        user_ok, user_message = self.db_manager.check_and_create_readonly_user()
+        
+        self.ui_queue.put(("DB_SCHEMA_DONE", (tables_ok, user_message)))
 
     # --- NEW: UI Update Logic with more states ---
     def process_queue(self):
@@ -333,6 +340,12 @@ class App(ctk.CTk):
                     self.db_status_label.configure(text=f"Info: {message}", text_color="orange") # Use orange for "already exists"
 
             elif message_type == "DB_SCHEMA_DONE":
+                tables_ok, user_message = data
+                self.db_test_button.configure(state="normal", text="Test & Save Connection")
+                
+                if tables_ok:
+                    # Display the result of the user creation step
+                    self.db_status_label.configure(text=f"Success! {user_message}", text_color="green")
                 success = data
                 self.db_test_button.configure(state="normal", text="Test & Save Connection")
                 if success:
