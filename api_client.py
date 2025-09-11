@@ -15,7 +15,11 @@ class ETAApiClient:
         self.access_token = None
         self.token_expiry_time = 0
         self.last_api_call_time = 0
-        self.min_request_interval = 0.6 
+        self.min_request_interval = 0.6  # tuned for max safe speed (2 req/sec)
+        
+        # ✅ Persistent session to reuse TCP/TLS connection
+        self.session = requests.Session()
+        self.session.headers.update({'Content-Type': 'application/json'})
 
     def _enforce_rate_limit(self):
         now = time.monotonic()
@@ -27,14 +31,16 @@ class ETAApiClient:
         self.last_api_call_time = time.monotonic()
 
     def test_authentication(self):
-        # ... (This method can remain the same as the previous version)
         self.access_token = None 
         auth_header = base64.b64encode(f"{self.client_id}:{self.client_secret}".encode()).decode()
-        headers = {'Authorization': f'Basic {auth_header}', 'Content-Type': 'application/x-www-form-urlencoded'}
+        headers = {
+            'Authorization': f'Basic {auth_header}',
+            'Content-Type': 'application/x-www-form-urlencoded'
+        }
         payload = {'grant_type': 'client_credentials'}
         try:
             self._enforce_rate_limit()
-            response = requests.post(self.auth_url, headers=headers, data=payload, timeout=10)
+            response = self.session.post(self.auth_url, headers=headers, data=payload, timeout=10)
             response.raise_for_status()
             token_data = response.json()
             self.access_token = token_data['access_token']
@@ -51,52 +57,61 @@ class ETAApiClient:
         return self.access_token if success else None
 
     def _make_request(self, method, url, **kwargs):
-        """A centralized and resilient request handler with retries and intelligent error handling."""
-        max_retries = 3
+        """Centralized request handler with retries, backoff, and error handling."""
+        max_retries = 5
         for attempt in range(max_retries):
             try:
                 self._enforce_rate_limit()
-                response = requests.request(method, url, **kwargs)
-                response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
+                response = self.session.request(method, url, **kwargs)
+
+                if response.status_code == 429:
+                    # --- Handle rate limit hit ---
+                    retry_after = response.headers.get("Retry-After")
+                    if retry_after:
+                        wait_time = int(retry_after)
+                    else:
+                        # fallback: exponential backoff with cap
+                        wait_time = min(30, 5 * (attempt + 1))
+
+                    print(f"⚠️ Hit API rate limit (429). Waiting {wait_time}s before retry...")
+                    time.sleep(wait_time)
+                    continue  # retry after waiting
+
+                response.raise_for_status()
                 return response.json()
 
             except requests.exceptions.HTTPError as e:
-                # --- THIS IS THE CRITICAL FIX ---
-                # If we get a 400 error specifically on the search endpoint,
-                # treat it as a valid "no results" response instead of a fatal error.
                 if e.response.status_code == 400 and "/documents/search" in url:
                     print(f"API returned 400 on search for {url}. Treating as no results found.")
-                    return {"result": [], "metadata": {}} # Return a valid, empty object
-                
-                # For other HTTP errors (like 401 Unauthorized, 500 Server Error), we should fail.
-                print(f"An unrecoverable HTTP error occurred: {e}")
-                return None # Return None to indicate failure
+                    return {"result": [], "metadata": {}}
+                print(f"Unrecoverable HTTP error: {e}")
+                return None
 
-            except requests.exceptions.ReadTimeout as e:
+            except requests.exceptions.ReadTimeout:
                 print(f"Read timeout. Retrying... (Attempt {attempt + 1}/{max_retries})")
                 time.sleep(3 * (attempt + 1))
+
             except requests.exceptions.RequestException as e:
-                print(f"A network error occurred: {e}. Retrying... (Attempt {attempt + 1}/{max_retries})")
+                print(f"Network error: {e}. Retrying... (Attempt {attempt + 1}/{max_retries})")
                 time.sleep(3 * (attempt + 1))
-        
+
         print(f"Request failed after {max_retries} attempts.")
         return None
 
-    def search_documents(self, start_date, end_date, page_size=100, continuation_token=None, direction=None):
-        """Searches for documents, now with support for a 'direction' filter."""
+    def search_documents(self, start_date, end_date, page_size=500, continuation_token=None, direction=None):
+        """Searches for documents, supports 'direction' filter."""
         token = self._get_access_token()
-        if not token: return None
+        if not token: 
+            return None
         
         headers = {'Authorization': f'Bearer {token}'}
         params = {
             'submissionDateFrom': start_date.strftime('%Y-%m-%dT%H:%M:%SZ'),
             'submissionDateTo': end_date.strftime('%Y-%m-%dT%H:%M:%SZ'),
-            'pageSize': page_size
+            'pageSize': page_size  # ✅ increased default page size
         }
         if continuation_token:
             params['continuationToken'] = continuation_token
-        
-        # --- NEW: Add the direction parameter if provided ---
         if direction:
             params['direction'] = direction
         
@@ -104,27 +119,17 @@ class ETAApiClient:
         return self._make_request('GET', url, headers=headers, params=params, timeout=20)
         
     def get_document_details(self, uuid):
-        """
-        Retrieves the full details for a single document. This version trusts the API response
-        and passes it on directly, correctly handling different document structures like 'Cancelled'.
-        """
+        """Retrieves full details for a single document."""
         token = self._get_access_token()
         if not token:
             return None
         
         headers = {'Authorization': f'Bearer {token}'}
         url = f"{self.base_url}/api/v1.0/documents/{uuid}/details"
-        
-        # The resilient _make_request handler already ensures we get a valid JSON or None.
-        # We no longer need the flawed check for the 'document' key.
-        response_json = self._make_request('GET', url, headers=headers, timeout=20)
+        return self._make_request('GET', url, headers=headers, timeout=20)
 
-        # If we got any valid JSON response, we return it.
-        return response_json
-
-    # The discovery functions remain the same as the last version
+    # ⬇️ Kept your discovery functions untouched for compatibility
     def find_newest_invoice_date(self):
-        # ... (Keep the last working version of this function)
         print("Searching for the newest invoice...")
         now = datetime.utcnow()
         for i in range(3):
@@ -148,16 +153,11 @@ class ETAApiClient:
         return None
 
     def find_oldest_invoice_date(self):
-        """
-        Finds the date of the oldest invoice by probing backwards. Extends the search
-        to 10 years and stops if a full year with no activity is found.
-        """
         print("Searching for the oldest invoice (this may take a moment)...")
         probe_end_date = datetime.utcnow()
         last_found_date = None
         consecutive_empty_months = 0
 
-        # Probe backwards month by month for up to 10 years (120 months)
         for i in range(120):
             probe_start_date = probe_end_date - timedelta(days=30)
             print(f"Probing date range: {probe_start_date.date()} to {probe_end_date.date()}...")
@@ -165,27 +165,17 @@ class ETAApiClient:
             data = self.search_documents(probe_start_date, probe_end_date, page_size=1)
 
             if data and data.get('result'):
-                # We found activity. This period might contain the oldest doc.
-                # Store the date from this result and reset the empty counter.
                 last_found_date = data['result'][0]['dateTimeReceived']
                 consecutive_empty_months = 0
             else:
-                # We found an empty period.
                 consecutive_empty_months += 1
-                
-                # --- NEW LOGIC: Stop if we find 12 consecutive empty months ---
                 if consecutive_empty_months >= 12:
                     print("Found a full year with no invoice activity. Stopping search.")
-                    break # Exit the loop
-            
-            # Move our search window back for the next iteration
+                    break
             probe_end_date = probe_start_date
         
-        # After the loop finishes (either by timeout or by stopping early),
-        # the last_found_date will hold the date from the oldest active month found.
         if last_found_date:
             print(f"Oldest invoice activity found around: {last_found_date}")
-            # Truncate to 6 microsecond digits for strptime compatibility
             if '.' in last_found_date and len(last_found_date.split('.')[1]) > 7:
                  last_found_date = last_found_date[:26] + "Z"
 
