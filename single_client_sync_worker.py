@@ -52,6 +52,7 @@ class SingleClientSyncWorker(Thread):
                                     self.newest_doc_in_run['internal_id'] = details.get('internalID') or details.get('document', {}).get('internalId')
                         else:
                             self.progress_queue.put(("LOG", f"DB_FAIL on doc {uuid[:8]}: {message}"))
+                            self.failed_uuids_in_run.add(uuid)
                     else:
                         self.progress_queue.put(("LOG", f"API_FAIL on doc {uuid[:8]}: Adding to retry queue."))
                         self.failed_uuids_in_run.add(uuid)
@@ -119,6 +120,7 @@ class SingleClientSyncWorker(Thread):
                     successfully_processed_retries.add(uuid)
                 else:
                     self.progress_queue.put(("LOG", f"      -> FAILED again on retried doc {uuid[:8]}. Keeping in queue."))
+                    self.failed_uuids_in_run.add(uuid)
 
             # Now, process the collected documents in their respective batches
             if docs_to_insert_received:
@@ -191,6 +193,9 @@ class SingleClientSyncWorker(Thread):
                 
                 all_discovered_uuids = [s['uuid'] for s in all_summaries if isinstance(s, dict) and 'uuid' in s]
                 if not all_discovered_uuids: continue
+
+                if all_summaries:
+                    self.progress_queue.put(("LOG", f"    -> Found {len(all_summaries)} '{direction}' documents for {client_name}."))
 
                 uuids_to_process = db_manager.filter_existing_uuids(all_discovered_uuids, table_prefix)
                 total_new_docs_in_phase2 += self._process_batch(db_manager, api_client, uuids_to_process, table_prefix, direction)
