@@ -67,11 +67,7 @@ class ETAApiClient:
                 if response.status_code == 429:
                     # --- Handle rate limit hit ---
                     retry_after = response.headers.get("Retry-After")
-                    if retry_after:
-                        wait_time = int(retry_after)
-                    else:
-                        # fallback: exponential backoff with cap
-                        wait_time = min(30, 5 * (attempt + 1))
+                    wait_time = int(response.headers.get("Retry-After", 3))
 
                     print(f"⚠️ Hit API rate limit (429). Waiting {wait_time}s before retry...")
                     time.sleep(wait_time)
