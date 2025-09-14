@@ -93,36 +93,36 @@ class SingleClientSyncWorker(Thread):
         if uuids_to_retry:
             self.progress_queue.put(("LOG", f"    -> Found {len(uuids_to_retry)} documents to retry for {client_name}."))
             
-            # Create separate lists for sent and received to batch them correctly
             docs_to_insert_received = []
             docs_to_insert_sent = []
 
             for uuid in uuids_to_retry:
                 if not self._is_running: break
 
-                # First, check if the document has been saved since it last failed.
-                # This prevents errors if a previous, interrupted run managed to save it.
+                # We still check for existence first to be efficient
                 if db_manager.document_exists(uuid, "") or db_manager.document_exists(uuid, "sent_"):
                     successfully_processed_retries.add(uuid)
-                    self.progress_queue.put(("LOG", f"      -> Doc {uuid[:8]} from retry queue already exists. Removing."))
+                    self.progress_queue.put(("LOG", f"      -> Doc {uuid[:8]} from queue already exists. Removing."))
                     continue
 
                 details = api_client.get_document_details(uuid)
                 if details:
-                    # Now we have the details, we can determine the correct direction
+                    # We determine the direction and add the *details* to the correct list
+                    # NOTE: We assume 'api_client.client_id' is the issuer's tax ID. If this is not the case,
+                    # this line would need to use `client_config.get('tax_id')` if you re-add that field.
                     is_sent = details.get('issuer', {}).get('id') == api_client.client_id
                     if is_sent:
                         docs_to_insert_sent.append(details)
                     else:
                         docs_to_insert_received.append(details)
                     
-                    # Mark as successful for now, it will be removed from the list later
+                    # We mark the UUID as successfully *processed* (not necessarily saved yet)
                     successfully_processed_retries.add(uuid)
                 else:
                     self.progress_queue.put(("LOG", f"      -> FAILED again on retried doc {uuid[:8]}. Keeping in queue."))
-                    self.failed_uuids_in_run.add(uuid)
+                    self.failed_uuids_in_run.add(uuid) # Add it to this run's failures
 
-            # Now, process the collected documents in their respective batches
+            # Now, we use the existing, efficient batching method to insert them
             if docs_to_insert_received:
                 self._process_batch_from_details(db_manager, docs_to_insert_received, "", "Retry-Received")
             
