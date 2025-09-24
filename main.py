@@ -133,16 +133,23 @@ class App(ctk.CTk):
         # Grid for entry fields
         entry_frame = ctk.CTkFrame(self.db_frame, fg_color="transparent")
         entry_frame.grid(row=1, column=0, sticky="ew")
-        entry_frame.grid_columnconfigure((0,1,2,3), weight=1)
-        
+        # We now have 5 columns for Host, Port, User, Pass, Name
+        entry_frame.grid_columnconfigure((0,2,3,4), weight=1)
+        entry_frame.grid_columnconfigure(1, weight=0) # Port field is smaller
+
         self.db_host_entry = ctk.CTkEntry(entry_frame, placeholder_text="DB Host")
         self.db_host_entry.grid(row=0, column=0, padx=5, pady=5, sticky="ew")
+
+        # --- NEW: Add the Port entry field ---
+        self.db_port_entry = ctk.CTkEntry(entry_frame, placeholder_text="Port", width=80)
+        self.db_port_entry.grid(row=0, column=1, padx=5, pady=5, sticky="w")
+        
         self.db_user_entry = ctk.CTkEntry(entry_frame, placeholder_text="DB User")
-        self.db_user_entry.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
+        self.db_user_entry.grid(row=0, column=2, padx=5, pady=5, sticky="ew")
         self.db_pass_entry = ctk.CTkEntry(entry_frame, placeholder_text="DB Password", show="*")
-        self.db_pass_entry.grid(row=0, column=2, padx=5, pady=5, sticky="ew")
+        self.db_pass_entry.grid(row=0, column=3, padx=5, pady=5, sticky="ew")
         self.db_name_entry = ctk.CTkEntry(entry_frame, placeholder_text="DB Name")
-        self.db_name_entry.grid(row=0, column=3, padx=5, pady=5, sticky="ew")
+        self.db_name_entry.grid(row=0, column=4, padx=5, pady=5, sticky="ew")
 
         # Grid for buttons
         button_frame = ctk.CTkFrame(self.db_frame, fg_color="transparent")
@@ -252,7 +259,7 @@ class App(ctk.CTk):
 
     def run_db_test(self):
         # ... (same as before)
-        db_params = { "host": self.db_host_entry.get(), "user": self.db_user_entry.get(), "password": self.db_pass_entry.get(), "dbname": self.db_name_entry.get() }
+        db_params = { "host": self.db_host_entry.get(),"port": int(self.db_port_entry.get() or 5432), "user": self.db_user_entry.get(), "password": self.db_pass_entry.get(), "dbname": self.db_name_entry.get() }
         if not all(db_params.values()):
             self.db_status_label.configure(text="Error: All database fields are required.", text_color="red"); return
         self.db_test_button.configure(state="disabled", text="Testing..."); self.db_status_label.configure(text="Status: Connecting...", text_color="orange")
@@ -361,7 +368,7 @@ class App(ctk.CTk):
                         client_name = f"Client-{self.client_id_entry.get()[:6]}"
                     date_span = (self.start_date_entry.get_date().strftime('%Y-%m-%d'), self.end_date_entry.get_date().strftime('%Y-%m-%d'))
                     config_manager.save_client_config(client_name, self.client_id_entry.get(), self.client_secret_entry.get(),
-                                                      self.db_host_entry.get(), 5432, self.db_name_entry.get(), self.db_user_entry.get(),
+                                                      self.db_host_entry.get(), int(self.db_port_entry.get() or 5432), self.db_name_entry.get(), self.db_user_entry.get(),
                                                       self.db_pass_entry.get(), date_span, self.discovered_oldest_date)
                      # First, save the last selected client name to the config
                     config_manager.save_last_selected_client(client_name)
@@ -629,6 +636,7 @@ class App(ctk.CTk):
             self.client_id_entry.delete(0, "end"); self.client_id_entry.insert(0, client_data.get('client_id', ''))
             self.client_secret_entry.delete(0, "end"); self.client_secret_entry.insert(0, client_data.get('client_secret', ''))
             self.db_host_entry.delete(0, "end"); self.db_host_entry.insert(0, client_data.get('db_host', ''))
+            self.db_port_entry.delete(0, "end"); self.db_port_entry.insert(0, client_data.get('db_port', '5432'))
             self.db_user_entry.delete(0, "end"); self.db_user_entry.insert(0, client_data.get('db_user', ''))
             self.db_pass_entry.delete(0, "end"); self.db_pass_entry.insert(0, client_data.get('db_pass', ''))
             self.db_name_entry.delete(0, "end"); self.db_name_entry.insert(0, client_data.get('db_name', ''))
