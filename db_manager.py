@@ -11,7 +11,7 @@ class DatabaseManager:
 
     def connect(self):
         try:
-            self.conn = psycopg2.connect(**self.db_params)
+            self.conn = self.conn = psycopg2.connect(**self.db_params, sslmode='require')
             return True
         except psycopg2.OperationalError:
             return False
@@ -216,12 +216,12 @@ class DatabaseManager:
                         self.conn.commit() # Commit the single successful command
 
             print("Schema verification complete.")
-            return True
+            return (True, "Schema is ready.")
 
         except psycopg2.Error as e:
             print(f"A fatal error occurred during schema creation: {e}")
             self.conn.rollback()
-            return False
+            return (False, str(e).strip())
 
     def check_and_create_readonly_user(self):
         """
@@ -238,6 +238,10 @@ class DatabaseManager:
         ro_password = f"{db_name}@FN"
         
         try:
+            # --- THIS IS THE CRITICAL FIX ---
+            # Temporarily set autocommit to True for user management commands
+            self.conn.autocommit = True
+            
             with self.conn.cursor() as cur:
                 # Step 1: Check if the user/role already exists
                 cur.execute("SELECT 1 FROM pg_catalog.pg_user WHERE usename = %s", (ro_username,))
@@ -272,6 +276,10 @@ class DatabaseManager:
             print(f"  -> ERROR during user creation/verification: {error_message}")
             self.conn.rollback()
             return (False, error_message)
+        finally:
+            # --- ALWAYS ensure we turn autocommit back off ---
+            if self.conn:
+                self.conn.autocommit = False
 
     def get_all_sync_statuses(self):
         """Fetches the last sync details for all clients."""
@@ -469,7 +477,7 @@ class DatabaseManager:
         conn = None
         try:
             # Establish the connection to the maintenance database
-            conn = psycopg2.connect(**temp_params)
+            conn = psycopg2.connect(**temp_params, sslmode='require')
             # CREATE DATABASE cannot run inside a transaction, so we use autocommit.
             conn.autocommit = True
             

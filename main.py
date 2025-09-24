@@ -258,23 +258,39 @@ class App(ctk.CTk):
         self.ui_queue.put(("ETA_ANALYZE_DONE", (oldest, newest)))
 
     def run_db_test(self):
-        # ... (same as before)
-        db_params = { "host": self.db_host_entry.get(),"port": int(self.db_port_entry.get() or 5432), "user": self.db_user_entry.get(), "password": self.db_pass_entry.get(), "dbname": self.db_name_entry.get() }
+        # --- THIS IS THE CRITICAL FIX ---
+        # Build the full db_params dictionary here, reading from the UI,
+        # so the worker thread receives the correct port.
+        db_params = {
+            "host": self.db_host_entry.get(),
+            "port": int(self.db_port_entry.get() or 5432), # Read from the port entry field
+            "user": self.db_user_entry.get(),
+            "password": self.db_pass_entry.get(),
+            "dbname": self.db_name_entry.get(),
+        }
         if not all(db_params.values()):
-            self.db_status_label.configure(text="Error: All database fields are required.", text_color="red"); return
-        self.db_test_button.configure(state="disabled", text="Testing..."); self.db_status_label.configure(text="Status: Connecting...", text_color="orange")
-        self.db_manager = DatabaseManager(db_params)
-        threading.Thread(target=self._db_test_worker).start()
+            self.db_status_label.configure(text="Error: All database fields are required.", text_color="red")
+            return
+        
+        self.db_test_button.configure(state="disabled", text="Testing...")
+        self.db_create_button.configure(state="disabled")
+        self.db_status_label.configure(text="Status: Connecting...", text_color="orange")
+        
+        # Pass the correctly built dictionary to the worker
+        threading.Thread(target=self._db_test_worker, args=(db_params,), daemon=True).start()
     
-    def _db_test_worker(self):
+    def _db_test_worker(self, db_params):
+        """Worker that uses the provided db_params to test the connection."""
+        self.db_manager = DatabaseManager(db_params)
+        
         if not self.db_manager.connect():
             self.ui_queue.put(("DB_CONNECT_FAIL", "Connection failed. Check credentials/network."))
             return
         
         self.ui_queue.put(("DB_STATUS_UPDATE", "Connected. Verifying/Creating tables..."))
-        tables_ok = self.db_manager.check_and_create_tables()
+        tables_ok, tables_message = self.db_manager.check_and_create_tables()
         if not tables_ok:
-            self.ui_queue.put(("DB_SCHEMA_DONE", (False, "Failed to create database tables.")))
+            self.ui_queue.put(("DB_SCHEMA_DONE", (False, tables_message)))
             return
 
         self.ui_queue.put(("DB_STATUS_UPDATE", "Tables OK. Verifying read-only user..."))
@@ -771,13 +787,19 @@ class App(ctk.CTk):
         self.ui_queue.put(("TRIGGER_LIVE_SYNC", None))
 
     def run_db_create(self):
-        """Starts the database creation worker thread."""
+        """Starts the database creation worker thread with the correct port."""
         db_name = self.db_name_entry.get()
         if not db_name:
-            self.db_status_label.configure(text="Error: DB Name field cannot be empty to create a database.", text_color="red")
+            self.db_status_label.configure(text="Error: DB Name field is required.", text_color="red")
             return
             
-        db_params = { "host": self.db_host_entry.get(), "user": self.db_user_entry.get(), "password": self.db_pass_entry.get(), "port": 5432 }
+        # --- THIS IS THE OTHER CRITICAL FIX ---
+        db_params = {
+            "host": self.db_host_entry.get(),
+            "port": int(self.db_port_entry.get() or 5432), # Read from the port entry field
+            "user": self.db_user_entry.get(),
+            "password": self.db_pass_entry.get()
+        }
         if not all(db_params.values()):
             self.db_status_label.configure(text="Error: Host, User, and Password fields are required.", text_color="red")
             return
@@ -785,9 +807,8 @@ class App(ctk.CTk):
         self.db_test_button.configure(state="disabled")
         self.db_create_button.configure(state="disabled", text="Creating...")
         self.db_status_label.configure(text=f"Status: Attempting to create '{db_name}'...", text_color="orange")
-
-        # We don't need a full DBManager instance, just the connection params
-        threading.Thread(target=self._db_create_worker, args=(db_params, db_name)).start()
+        
+        threading.Thread(target=self._db_create_worker, args=(db_params, db_name), daemon=True).start()
 
     def _db_create_worker(self, db_params, db_name):
         """Worker that calls the new creation logic."""
