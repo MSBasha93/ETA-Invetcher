@@ -27,6 +27,7 @@ class DatabaseManager:
             self.connect()
 
     def check_and_create_tables(self):
+        self._ensure_connection()
         """
         Creates the FULL, detailed schema matching your 'menna' database.
         """
@@ -224,6 +225,7 @@ class DatabaseManager:
             return (False, str(e).strip())
 
     def check_and_create_readonly_user(self):
+        self._ensure_connection()
         """
         Checks if a read-only user for the current database exists, and creates it
         with the correct permissions if it doesn't.
@@ -282,6 +284,7 @@ class DatabaseManager:
                 self.conn.autocommit = False
 
     def get_all_sync_statuses(self):
+        self._ensure_connection()
         """Fetches the last sync details for all clients."""
         statuses = {}
         sql = "SELECT client_id, last_sync_timestamp, last_synced_uuid, last_synced_internal_id FROM SyncStatus;"
@@ -297,6 +300,7 @@ class DatabaseManager:
             return {}
 
     def update_sync_status(self, client_id, sync_timestamp, uuid, internal_id):
+        self._ensure_connection()
         """Records the full details of the last successful sync for a client."""
         sql = """
             INSERT INTO SyncStatus (client_id, last_sync_timestamp, last_synced_uuid, last_synced_internal_id)
@@ -316,6 +320,7 @@ class DatabaseManager:
             self.conn.rollback()
 
     def update_document_status(self, uuid, new_status, reason, table_prefix=""):
+        self._ensure_connection()
         """Updates the status and reason for a single document."""
         table_name = f"{table_prefix}documents"
         sql = f"UPDATE {table_name} SET status = %s, document_status_reason = %s WHERE uuid = %s;"
@@ -335,6 +340,7 @@ class DatabaseManager:
         with self.conn.cursor() as cur: cur.execute(query, (uuid,)); return cur.fetchone() is not None
 
     def filter_existing_uuids(self, uuids_to_check, table_prefix=""):
+        self._ensure_connection()
         """
         Takes a list of UUIDs and returns a new list containing only the UUIDs
         that do NOT already exist in the database.
@@ -364,6 +370,7 @@ class DatabaseManager:
     
 
     def insert_document(self, cursor, doc_data, table_prefix=""):
+        self._ensure_connection()
         """
         Inserts a single document using a provided database cursor for batching.
         This version is designed to be called from a worker's transaction loop.
@@ -440,6 +447,7 @@ class DatabaseManager:
             return None
 
     def get_influx_document_uuids(self):
+        self._ensure_connection()
         """
         Fetches the UUIDs of all 'Valid' documents whose cancellation/rejection
         period has not yet passed. These are the only documents that need re-checking.

@@ -273,7 +273,6 @@ class App(ctk.CTk):
             return
         
         self.db_test_button.configure(state="disabled", text="Testing...")
-        self.db_create_button.configure(state="disabled")
         self.db_status_label.configure(text="Status: Connecting...", text_color="orange")
         
         # Pass the correctly built dictionary to the worker
@@ -655,7 +654,7 @@ class App(ctk.CTk):
             self.db_port_entry.delete(0, "end"); self.db_port_entry.insert(0, client_data.get('db_port', '5432'))
             self.db_user_entry.delete(0, "end"); self.db_user_entry.insert(0, client_data.get('db_user', ''))
             self.db_pass_entry.delete(0, "end"); self.db_pass_entry.insert(0, client_data.get('db_pass', ''))
-            self.db_name_entry.delete(0, "end"); self.db_name_entry.insert(0, client_data.get('db_name', ''))
+            self.db_name_entry.delete(0, "end")
             
             # --- NEW: Reset status labels and the view ---
             self.eta_status_label.configure(text="Status: Awaiting credentials...", text_color="gray")
