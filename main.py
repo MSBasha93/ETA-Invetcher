@@ -378,7 +378,7 @@ class App(ctk.CTk):
                     client_name = self.client_name_entry.get()
                     # 2. If it's empty, fall back to the dropdown's selected value.
                     if not client_name: client_name = f"Client-{self.client_id_entry.get()[:6]}"
-                    
+
                     date_span = (self.start_date_entry.get_date().strftime('%Y-%m-%d'), self.end_date_entry.get_date().strftime('%Y-%m-%d'))
                     config_manager.save_client_config(client_name, self.client_id_entry.get(), self.client_secret_entry.get(),
                                                       self.db_host_entry.get(), int(self.db_port_entry.get() or 5432), self.db_name_entry.get(), self.db_user_entry.get(),
@@ -651,10 +651,6 @@ class App(ctk.CTk):
         self.client_name_entry.delete(0, "end")
         self.client_id_entry.delete(0, "end")
         self.client_secret_entry.delete(0, "end")
-        self.db_host_entry.delete(0, "end")
-        self.db_port_entry.delete(0, "end")
-        self.db_user_entry.delete(0, "end")
-        self.db_pass_entry.delete(0, "end")
         self.db_name_entry.delete(0, "end")
         self.eta_status_label.configure(text="Status: Awaiting credentials...", text_color="gray")
         self.db_status_label.configure(text="Status: Awaiting credentials...", text_color="gray")
