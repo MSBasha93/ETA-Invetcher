@@ -51,6 +51,7 @@ class App(ctk.CTk):
         self.create_live_sync_frame()
 
         self.load_clients_from_config()
+        self.clear_all_fields()
         self.after(100, self.process_queue)
         self.show_frame(self.eta_frame)
 
@@ -376,11 +377,8 @@ class App(ctk.CTk):
                      # 1. Prioritize the name from the text entry box.
                     client_name = self.client_name_entry.get()
                     # 2. If it's empty, fall back to the dropdown's selected value.
-                    if not client_name:
-                        client_name = self.selected_client_name.get()
-                    # 3. As a final failsafe, create a default name.
-                    if not client_name or client_name == "No clients configured":
-                        client_name = f"Client-{self.client_id_entry.get()[:6]}"
+                    if not client_name: client_name = f"Client-{self.client_id_entry.get()[:6]}"
+                    
                     date_span = (self.start_date_entry.get_date().strftime('%Y-%m-%d'), self.end_date_entry.get_date().strftime('%Y-%m-%d'))
                     config_manager.save_client_config(client_name, self.client_id_entry.get(), self.client_secret_entry.get(),
                                                       self.db_host_entry.get(), int(self.db_port_entry.get() or 5432), self.db_name_entry.get(), self.db_user_entry.get(),
@@ -423,13 +421,13 @@ class App(ctk.CTk):
                     self.live_sync_refresh_button.configure(state="normal") # Also re-enable refresh
                     
             elif message_type == "HISTORICAL_SYNC_COMPLETE":
-                skipped_days, failed_uuids = data
-                final_message = f"Sync Finished! Skipped {len(skipped_days)} days and queued {len(failed_uuids)} documents for the next Live Sync."
+                skipped_days, failed_uuids, client_name_from_worker = data
+                
+                final_message = f"Sync Finished for '{client_name_from_worker}'! Skipped {len(skipped_days)} days and queued {len(failed_uuids)} documents for the next Live Sync."
                 self.log_message(final_message)
                 
-                client_name = self.client_name_entry.get()
-                if client_name in self.clients:
-                    client_data = self.clients[client_name]
+                if client_name_from_worker in self.clients:
+                    client_data = self.clients[client_name_from_worker]
                     # Merge skipped days
                     existing_skipped = set(client_data.get('skipped_days', []))
                     final_skipped_list = sorted(list(existing_skipped | set(skipped_days)))
@@ -437,14 +435,22 @@ class App(ctk.CTk):
                     existing_failed = set(client_data.get('failed_uuids', []))
                     final_failed_list = sorted(list(existing_failed | set(failed_uuids)))
                     
+                    # Save the complete, updated configuration to the file
                     config_manager.save_client_config(
-                        client_name, client_data.get('client_id'), client_data.get('client_secret'),
+                        client_name_from_worker, client_data.get('client_id'), client_data.get('client_secret'),
                         client_data.get('db_host'), client_data.get('db_port'), client_data.get('db_name'),
                         client_data.get('db_user'), client_data.get('db_pass'), client_data.get('date_span'),
                         client_data.get('oldest_invoice_date'), final_skipped_list, final_failed_list
                     )
-                    self.load_clients_from_config()
+                    
+                    # Manually update the in-memory dictionary for this one client
+                    self.clients[client_name_from_worker]['skipped_days'] = final_skipped_list
+                    self.clients[client_name_from_worker]['failed_uuids'] = final_failed_list
+                    config_manager.save_last_selected_client(client_name_from_worker)
+                    self.clients = config_manager.load_all_clients()
+                    
                 
+                # The UI state (dropdown selection, text fields) is NOT changed.
                 self.sync_button.configure(state="normal")
                 self.cancel_button.configure(state="disabled")
                 messagebox.showinfo("Historical Sync", final_message)
@@ -622,31 +628,54 @@ class App(ctk.CTk):
         self.clients = config_manager.load_all_clients()
         client_names = list(self.clients.keys())
         
-        # Determine the initial selected client
+        # Determine the correct client to select after loading
         last_client = config_manager.load_last_selected_client()
         if last_client and last_client in self.clients:
             selected = last_client
-        elif client_names:
-            selected = client_names[0]
         else:
-            selected = "No clients configured"
+            # If no last client is saved, default to the placeholder
+            selected = "-- Select a Client --"
 
-        # Update the dropdown menu's options and set its variable
-        self.client_selector.configure(values=client_names if client_names else ["No clients configured"])
+        # Update the dropdown menu's options
+        display_names = ["-- Select a Client --"] + client_names if client_names else ["No clients configured"]
+        self.client_selector.configure(values=display_names)
+        
+        # Set the dropdown's variable to the determined selection
         self.selected_client_name.set(selected)
         
-        # CRITICAL FIX: After setting the variable, explicitly call the handler
-        # to ensure all UI fields (including the master entry box) are updated.
-        if selected in self.clients:
-            self.on_client_selected(selected)
+        # Explicitly call the handler to update all UI fields to match the selection
+        self.on_client_selected(selected)
+    
+    def clear_all_fields(self):
+        """A dedicated helper to clear all user-input fields."""
+        self.client_name_entry.delete(0, "end")
+        self.client_id_entry.delete(0, "end")
+        self.client_secret_entry.delete(0, "end")
+        self.db_host_entry.delete(0, "end")
+        self.db_port_entry.delete(0, "end")
+        self.db_user_entry.delete(0, "end")
+        self.db_pass_entry.delete(0, "end")
+        self.db_name_entry.delete(0, "end")
+        self.eta_status_label.configure(text="Status: Awaiting credentials...", text_color="gray")
+        self.db_status_label.configure(text="Status: Awaiting credentials...", text_color="gray")
+        self.eta_analyze_button.configure(state="disabled")
     
     def on_client_selected(self, selected_name):
         """Called when a client is chosen. Populates fields and resets the view."""
+        
+        # --- THIS IS THE CRITICAL FIX ---
+        # If the user selects the placeholder, clear all fields.
+        if selected_name == "-- Select a Client --" or selected_name == "No clients configured":
+            self.clear_all_fields()
+            return # Stop here
+
+        # If a real client is selected, proceed with populating the fields.
         if selected_name in self.clients:
             client_data = self.clients[selected_name]
             self.client_name_entry.delete(0, "end")
             self.client_name_entry.insert(0, selected_name)
             self.selected_client_name.set(selected_name)
+            
             # Populate all fields from saved config
             self.client_id_entry.delete(0, "end"); self.client_id_entry.insert(0, client_data.get('client_id', ''))
             self.client_secret_entry.delete(0, "end"); self.client_secret_entry.insert(0, client_data.get('client_secret', ''))
@@ -654,15 +683,13 @@ class App(ctk.CTk):
             self.db_port_entry.delete(0, "end"); self.db_port_entry.insert(0, client_data.get('db_port', '5432'))
             self.db_user_entry.delete(0, "end"); self.db_user_entry.insert(0, client_data.get('db_user', ''))
             self.db_pass_entry.delete(0, "end"); self.db_pass_entry.insert(0, client_data.get('db_pass', ''))
-            self.db_name_entry.delete(0, "end")
+            self.db_name_entry.delete(0, "end"); self.db_name_entry.insert(0, client_data.get('db_name', ''))
             
-            # --- NEW: Reset status labels and the view ---
             self.eta_status_label.configure(text="Status: Awaiting credentials...", text_color="gray")
             self.db_status_label.configure(text="Status: Awaiting credentials...", text_color="gray")
-            self.eta_analyze_button.configure(state="disabled") # Re-disable analyze button until auth is tested
+            self.eta_analyze_button.configure(state="disabled")
             
             config_manager.save_last_selected_client(selected_name)
-            # --- NEW: Always return to the first step for the newly selected client ---
             self.show_frame(self.eta_frame)
 
     def start_sync(self):
@@ -679,7 +706,8 @@ class App(ctk.CTk):
         self.log_message("--- Starting Sync ---")
         self.sync_button.configure(state="disabled"); self.cancel_button.configure(state="normal")
         start_date, end_date = self.start_date_entry.get_date(), self.end_date_entry.get_date()
-        self.sync_worker_thread = SyncWorker(self.api_client.client_id, self.api_client, self.db_manager, start_date, end_date, self.ui_queue)
+        client_name_for_sync = self.selected_client_name.get()
+        self.sync_worker_thread = SyncWorker(client_name_for_sync, self.api_client.client_id, self.api_client, self.db_manager, start_date, end_date, self.ui_queue)
         self.sync_worker_thread.start()
 
         

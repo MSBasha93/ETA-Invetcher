@@ -4,9 +4,10 @@ import datetime
 import pytz
 
 class SyncWorker(Thread):
-    def __init__(self, client_id, api_client, db_manager, start_date, end_date, progress_queue):
+    def __init__(self, client_name, client_id, api_client, db_manager, start_date, end_date, progress_queue):
         super().__init__()
         self.client_id = client_id
+        self.client_name = client_name
         self.api_client = api_client
         self.db_manager = db_manager
         self.start_date = start_date
@@ -127,4 +128,4 @@ class SyncWorker(Thread):
                 self.newest_doc_in_run['internal_id']
             )
         
-        self.progress_queue.put(("HISTORICAL_SYNC_COMPLETE", (self.skipped_days_in_run, list(self.failed_uuids_in_run))))
+        self.progress_queue.put(("HISTORICAL_SYNC_COMPLETE", (self.skipped_days_in_run, list(self.failed_uuids_in_run), self.client_name)))
